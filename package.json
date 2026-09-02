@@ -1,0 +1,58 @@
+{
+  "name": "proofit",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Air-gapped, zero-trust, client-side digital evidence preservation platform",
+  "scripts": {
+    "dev": "next dev --turbopack",
+    "build": "next build",
+    "start": "next start",
+    "lint": "next lint",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/abdushakurob/proofit.git"
+  },
+  "keywords": [
+    "evidence",
+    "cryptography",
+    "chain-of-custody",
+    "pwa"
+  ],
+  "author": "",
+  "license": "ISC",
+  "bugs": {
+    "url": "https://github.com/abdushakurob/proofit/issues"
+  },
+  "homepage": "https://github.com/abdushakurob/proofit#readme",
+  "dependencies": {
+    "baseline-browser-mapping": "^2.11.25",
+    "better-sqlite3": "^13.0.3",
+    "canonicalize": "^5.0.0",
+    "clsx": "^2.1.1",
+    "drizzle-orm": "^0.45.2",
+    "fflate": "^0.8.3",
+    "html2canvas": "^1.4.1",
+    "idb-keyval": "^6.3.0",
+    "jspdf": "^4.2.1",
+    "lucide-react": "^1.47.0",
+    "next": "^16.3.5",
+    "react": "^19.3.0",
+    "react-dom": "^19.3.0",
+    "tailwind-merge": "^3.7.0"
+  },
+  "devDependencies": {
+    "@tailwindcss/postcss": "^4.1.0",
+    "@types/better-sqlite3": "^9.6.0",
+    "@types/node": "^22.0.0",
+    "@types/react": "^19.0.0",
+    "@types/react-dom": "^19.0.0",
+    "jsdom": "^30.1.0",
+    "postcss": "^8.5.0",
+    "tailwindcss": "^4.1.0",
+    "typescript": "^5.7.0",
+    "vitest": "^3.0.0"
+  }
+}

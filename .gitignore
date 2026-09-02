@@ -1,0 +1,23 @@
+# dependencies
+/node_modules
+/.pnpm-store
+
+# next.js
+/.next/
+/out/
+next-env.d.ts
+
+# production & database
+proofit.db
+proofit.db-shm
+proofit.db-wal
+*.db
+*.sqlite
+
+# debug & environment
+.env*.local
+*.log
+
+# OS
+.DS_Store
+Thumbs.db
