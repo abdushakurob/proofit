@@ -10,7 +10,7 @@ export async function GET() {
     const db = getDb();
     const rows = await db.select().from(officerRegistry);
 
-    const officers = rows.map((r) => ({
+    const officers = rows.map((r: any) => ({
       oin: r.badgeId,
       full_name: r.fullName,
       rank: r.rank,
