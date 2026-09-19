@@ -42,8 +42,18 @@ export default function RootLayout({
             __html: `
               if ('serviceWorker' in navigator) {
                 window.addEventListener('load', function() {
-                  navigator.serviceWorker.register('/sw.js').catch(function(err) {
+                  navigator.serviceWorker.register('/sw.js').then(function(reg) {
+                    if (reg.active) {
+                      reg.active.postMessage({ type: 'WARM_CACHE' });
+                    }
+                  }).catch(function(err) {
                     console.warn('SW registration failed:', err);
+                  });
+
+                  // Background route prefetcher for full PWA navigation availability
+                  var routes = ['/', '/workspace', '/verify', '/login', '/oin', '/oin/docs', '/docs'];
+                  routes.forEach(function(r) {
+                    fetch(r, { priority: 'low' }).catch(function() {});
                   });
                 });
               }

@@ -1,10 +1,10 @@
 /* ─────────────────────────────────────────────────────────────
-   ProofIt Offline-First PWA Service Worker (sw.js)
-   Network-First for HTML Navigations, Cache-First for Assets
+   ProofIt Offline-First PWA Service Worker (sw.js - v4)
+   Automatic Background Cache Warmer & Stale-While-Revalidate
    ───────────────────────────────────────────────────────────── */
 
-const CACHE_NAME = "proofit-v3";
-const ASSETS_TO_CACHE = [
+const CACHE_NAME = "proofit-v4";
+const ROUTES_TO_CACHE = [
   "/",
   "/workspace",
   "/login",
@@ -17,11 +17,45 @@ const ASSETS_TO_CACHE = [
   "/icon-512.png"
 ];
 
+async function warmCache() {
+  try {
+    const cache = await caches.open(CACHE_NAME);
+    await cache.addAll(ROUTES_TO_CACHE);
+
+    // Warm Next.js static JS/CSS assets by parsing script and link tags from cached HTML
+    for (const route of ["/", "/workspace", "/verify", "/login", "/oin"]) {
+      try {
+        const response = await fetch(route);
+        if (response && response.status === 200) {
+          await cache.put(route, response.clone());
+          const html = await response.text();
+          const matches = html.match(/(?:src|href)="(\/_next\/static\/[^"]+)"/g);
+          if (matches) {
+            for (const match of matches) {
+              const url = match.replace(/^(?:src|href)="/, "").replace(/"$/, "");
+              if (url) {
+                cache.add(url).catch(() => {});
+              }
+            }
+          }
+        }
+      } catch (err) {
+        // Ignore single route warming failure
+      }
+    }
+  } catch (err) {
+    console.warn("PWA cache warming notice:", err);
+  }
+}
+
 self.addEventListener("install", (event) => {
   event.waitUntil(
     caches.open(CACHE_NAME).then((cache) => {
-      return cache.addAll(ASSETS_TO_CACHE);
-    }).then(() => self.skipWaiting())
+      return cache.addAll(ROUTES_TO_CACHE);
+    }).then(() => {
+      self.skipWaiting();
+      return warmCache();
+    })
   );
 });
 
@@ -35,19 +69,27 @@ self.addEventListener("activate", (event) => {
           }
         })
       );
-    }).then(() => self.clients.claim())
+    }).then(() => {
+      self.clients.claim();
+      return warmCache();
+    })
   );
+});
+
+self.addEventListener("message", (event) => {
+  if (event.data && event.data.type === "WARM_CACHE") {
+    warmCache();
+  }
 });
 
 self.addEventListener("fetch", (event) => {
   if (event.request.method !== "GET") return;
   if (event.request.url.includes("/api/")) return;
 
-  const isNavigation = event.request.mode === "navigate" || event.request.headers.get("accept")?.includes("text/html");
-
-  if (isNavigation) {
-    event.respondWith(
-      fetch(event.request)
+  // Stale-While-Revalidate Strategy for all HTML, JS, CSS, and Image requests
+  event.respondWith(
+    caches.match(event.request).then((cachedResponse) => {
+      const fetchPromise = fetch(event.request)
         .then((networkResponse) => {
           if (networkResponse && networkResponse.status === 200) {
             const copy = networkResponse.clone();
@@ -56,37 +98,10 @@ self.addEventListener("fetch", (event) => {
           return networkResponse;
         })
         .catch(() => {
-          return caches.match(event.request).then((cached) => cached || caches.match("/"));
-        })
-    );
-    return;
-  }
-
-  event.respondWith(
-    caches.match(event.request).then((cachedResponse) => {
-      if (cachedResponse) {
-        fetch(event.request).then((networkResponse) => {
-          if (networkResponse && networkResponse.status === 200) {
-            caches.open(CACHE_NAME).then((cache) => cache.put(event.request, networkResponse));
-          }
-        }).catch(() => {});
-        return cachedResponse;
-      }
-
-      return fetch(event.request).then((networkResponse) => {
-        if (!networkResponse || networkResponse.status !== 200 || networkResponse.type !== "basic") {
-          return networkResponse;
-        }
-        const responseToCache = networkResponse.clone();
-        caches.open(CACHE_NAME).then((cache) => {
-          cache.put(event.request, responseToCache);
+          return cachedResponse || caches.match("/workspace") || caches.match("/");
         });
-        return networkResponse;
-      }).catch(() => {
-        if (event.request.headers.get("accept")?.includes("text/html")) {
-          return caches.match("/");
-        }
-      });
+
+      return cachedResponse || fetchPromise;
     })
   );
 });
