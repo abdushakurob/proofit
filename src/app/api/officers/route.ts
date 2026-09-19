@@ -85,8 +85,9 @@ export async function POST(request: Request) {
     });
   } catch (error) {
     console.error("Failed to register officer in OIN portal:", error);
+    const details = error instanceof Error ? error.message : String(error);
     return NextResponse.json(
-      { error: "Failed to register officer in database", success: false },
+      { error: "Failed to register officer in database", details, success: false },
       { status: 500 }
     );
   }
