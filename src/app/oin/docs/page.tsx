@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import Link from "next/link";
 import { Terminal, Copy, Check, Key, ShieldCheck, ArrowLeft } from "lucide-react";
 
@@ -13,7 +13,7 @@ interface Endpoint {
   authRequired: boolean;
   requestBody?: string;
   responseExample: string;
-  curlExample: string;
+  getCurlExample: (baseUrl: string) => string;
   jsExample: string;
 }
 
@@ -39,7 +39,7 @@ const ENDPOINTS: Endpoint[] = [
         }
       ]
     }, null, 2),
-    curlExample: `curl -X GET "http://localhost:3000/api/officers"`,
+    getCurlExample: (baseUrl) => `curl -X GET "${baseUrl}/api/officers"`,
     jsExample: `const res = await fetch("/api/officers");\nconst data = await res.json();\nconsole.log(data.officers);`
   },
   {
@@ -61,7 +61,7 @@ const ENDPOINTS: Endpoint[] = [
       oin: "EFCC-89421",
       success: true
     }, null, 2),
-    curlExample: `curl -X POST "http://localhost:3000/api/officers" \\\n  -H "Authorization: Bearer oin_live_sec_8f93e2b17a04c5d9e1823f4b6790a12c4e56" \\\n  -H "Content-Type: application/json" \\\n  -d '{\n    "oin": "EFCC-89421",\n    "full_name": "Detective Chukwuma Obi",\n    "rank": "Lead Detective",\n    "agency": "EFCC",\n    "public_stamp": "04a1b2c3d4e5f67890..."\n  }'`,
+    getCurlExample: (baseUrl) => `curl -X POST "${baseUrl}/api/officers" \\\n  -H "Authorization: Bearer oin_live_sec_8f93e2b17a04c5d9e1823f4b6790a12c4e56" \\\n  -H "Content-Type: application/json" \\\n  -d '{\n    "oin": "EFCC-89421",\n    "full_name": "Detective Chukwuma Obi",\n    "rank": "Lead Detective",\n    "agency": "EFCC",\n    "public_stamp": "04a1b2c3d4e5f67890..."\n  }'`,
     jsExample: `const res = await fetch("/api/officers", {\n  method: "POST",\n  headers: {\n    "Authorization": "Bearer oin_live_sec_8f93e2b17a04c5d9e1823f4b6790a12c4e56",\n    "Content-Type": "application/json"\n  },\n  body: JSON.stringify({\n    oin: "EFCC-89421",\n    full_name: "Detective Chukwuma Obi",\n    rank: "Lead Detective",\n    agency: "EFCC",\n    public_stamp: "04a1b2c3d4e5f67890..."\n  })\n});\nconst data = await res.json();`
   },
   {
@@ -85,7 +85,7 @@ const ENDPOINTS: Endpoint[] = [
         }
       ]
     }, null, 2),
-    curlExample: `curl -X GET "http://localhost:3000/api/cases"`,
+    getCurlExample: (baseUrl) => `curl -X GET "${baseUrl}/api/cases"`,
     jsExample: `const res = await fetch("/api/cases");\nconst data = await res.json();\nconsole.log(data.cases);`
   },
   {
@@ -110,7 +110,7 @@ const ENDPOINTS: Endpoint[] = [
       success: true,
       message: "Custody record signed and appended successfully."
     }, null, 2),
-    curlExample: `curl -X POST "http://localhost:3000/api/custody" \\\n  -H "Content-Type: application/json" \\\n  -d '{\n    "evidence_id": "EVD-CASE-10492",\n    "timestamp": "2026-09-19T15:00:00.000Z",\n    "actor_badge_id": "NGP-001",\n    "actor_name": "Inspector Adamu Bello",\n    "action": "Container Handover",\n    "notes": "Transferred custody to forensic laboratory",\n    "canonical_hash": "e3b0c4...",\n    "signature": "MEUCIQD...",\n    "public_stamp": "048f93..."\n  }'`,
+    getCurlExample: (baseUrl) => `curl -X POST "${baseUrl}/api/custody" \\\n  -H "Content-Type: application/json" \\\n  -d '{\n    "evidence_id": "EVD-CASE-10492",\n    "timestamp": "2026-09-19T15:00:00.000Z",\n    "actor_badge_id": "NGP-001",\n    "actor_name": "Inspector Adamu Bello",\n    "action": "Container Handover",\n    "notes": "Transferred custody to forensic laboratory",\n    "canonical_hash": "e3b0c4...",\n    "signature": "MEUCIQD...",\n    "public_stamp": "048f93..."\n  }'`,
     jsExample: `const res = await fetch("/api/custody", {\n  method: "POST",\n  headers: { "Content-Type": "application/json" },\n  body: JSON.stringify({ evidence_id: "EVD-101", ... })\n});`
   },
   {
@@ -141,7 +141,7 @@ const ENDPOINTS: Endpoint[] = [
       syncedCount: 1,
       message: "Offline custody records synchronized to central database."
     }, null, 2),
-    curlExample: `curl -X POST "http://localhost:3000/api/sync" \\\n  -H "Content-Type: application/json" \\\n  -d '{"case_id": "CASE-10492", "records": [...]}'`,
+    getCurlExample: (baseUrl) => `curl -X POST "${baseUrl}/api/sync" \\\n  -H "Content-Type: application/json" \\\n  -d '{"case_id": "CASE-10492", "records": [...]}'`,
     jsExample: `const res = await fetch("/api/sync", {\n  method: "POST",\n  headers: { "Content-Type": "application/json" },\n  body: JSON.stringify({ case_id: "CASE-10492", records: [...] })\n});`
   }
 ];
@@ -150,6 +150,13 @@ export default function OinApiDocsPage() {
   const [selectedEndpoint, setSelectedEndpoint] = useState<Endpoint>(ENDPOINTS[0]);
   const [activeCodeTab, setActiveCodeTab] = useState<"curl" | "js" | "response">("curl");
   const [copiedId, setCopiedId] = useState<string | null>(null);
+  const [baseUrl, setBaseUrl] = useState<string>("https://proofit-lilac.vercel.app");
+
+  useEffect(() => {
+    if (typeof window !== "undefined") {
+      setBaseUrl(window.location.origin);
+    }
+  }, []);
 
   const handleCopy = (text: string, id: string) => {
     navigator.clipboard.writeText(text);
@@ -334,7 +341,7 @@ export default function OinApiDocsPage() {
                   onClick={() => {
                     const text =
                       activeCodeTab === "curl"
-                        ? selectedEndpoint.curlExample
+                        ? selectedEndpoint.getCurlExample(baseUrl)
                         : activeCodeTab === "js"
                         ? selectedEndpoint.jsExample
                         : selectedEndpoint.responseExample;
@@ -359,7 +366,7 @@ export default function OinApiDocsPage() {
               {/* Code Box */}
               <div className="bg-[#1a1c1d] rounded-xl overflow-hidden border border-neutral-800 p-4">
                 <pre className="text-xs font-mono leading-relaxed overflow-x-auto text-emerald-400">
-                  {activeCodeTab === "curl" && selectedEndpoint.curlExample}
+                  {activeCodeTab === "curl" && selectedEndpoint.getCurlExample(baseUrl)}
                   {activeCodeTab === "js" && selectedEndpoint.jsExample}
                   {activeCodeTab === "response" && selectedEndpoint.responseExample}
                 </pre>
