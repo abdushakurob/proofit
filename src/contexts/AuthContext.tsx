@@ -130,6 +130,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
 
     sessionStorage.setItem("proofit_active_badge", badgeId);
+    sessionStorage.setItem("proofit_passcode", password);
     localStorage.setItem("proofit_last_badge", badgeId);
 
     setState({
@@ -140,9 +141,23 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     });
   }, []);
 
+  // Auto-restore officer authentication state from sessionStorage on page mount/reload
+  React.useEffect(() => {
+    const savedBadge = sessionStorage.getItem("proofit_active_badge");
+    const savedPasscode = sessionStorage.getItem("proofit_passcode");
+
+    if (savedBadge && savedPasscode && !state.isAuthenticated) {
+      unlock(savedBadge, savedPasscode).catch(() => {
+        sessionStorage.removeItem("proofit_active_badge");
+        sessionStorage.removeItem("proofit_passcode");
+      });
+    }
+  }, [unlock, state.isAuthenticated]);
+
   const lock = useCallback(() => {
     const currentBadge = sessionStorage.getItem("proofit_active_badge") || localStorage.getItem("proofit_last_badge");
     sessionStorage.removeItem("proofit_active_badge");
+    sessionStorage.removeItem("proofit_passcode");
     localStorage.removeItem("proofit_last_badge");
     del("proofit_active_bag").catch(() => {});
     if (currentBadge) {

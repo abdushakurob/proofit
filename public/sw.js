@@ -1,9 +1,9 @@
 /* ─────────────────────────────────────────────────────────────
    ProofIt Offline-First PWA Service Worker (sw.js)
-   Cache-First Strategy for Offline Air-Gapped Operation
+   Network-First for HTML Navigations, Cache-First for Assets
    ───────────────────────────────────────────────────────────── */
 
-const CACHE_NAME = "proofit-v2";
+const CACHE_NAME = "proofit-v3";
 const ASSETS_TO_CACHE = [
   "/",
   "/workspace",
@@ -42,6 +42,25 @@ self.addEventListener("activate", (event) => {
 self.addEventListener("fetch", (event) => {
   if (event.request.method !== "GET") return;
   if (event.request.url.includes("/api/")) return;
+
+  const isNavigation = event.request.mode === "navigate" || event.request.headers.get("accept")?.includes("text/html");
+
+  if (isNavigation) {
+    event.respondWith(
+      fetch(event.request)
+        .then((networkResponse) => {
+          if (networkResponse && networkResponse.status === 200) {
+            const copy = networkResponse.clone();
+            caches.open(CACHE_NAME).then((cache) => cache.put(event.request, copy));
+          }
+          return networkResponse;
+        })
+        .catch(() => {
+          return caches.match(event.request).then((cached) => cached || caches.match("/"));
+        })
+    );
+    return;
+  }
 
   event.respondWith(
     caches.match(event.request).then((cachedResponse) => {
