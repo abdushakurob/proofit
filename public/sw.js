@@ -3,12 +3,18 @@
    Cache-First Strategy for Offline Air-Gapped Operation
    ───────────────────────────────────────────────────────────── */
 
-const CACHE_NAME = "proofit-v1";
+const CACHE_NAME = "proofit-v2";
 const ASSETS_TO_CACHE = [
   "/",
-  "/manifest.webmanifest",
+  "/workspace",
   "/login",
-  "/oin"
+  "/oin",
+  "/oin/docs",
+  "/verify",
+  "/docs",
+  "/manifest.webmanifest",
+  "/icon-192.png",
+  "/icon-512.png"
 ];
 
 self.addEventListener("install", (event) => {
