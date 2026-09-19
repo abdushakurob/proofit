@@ -300,6 +300,9 @@ export default function RedactionStudio({ file, onClose, onCommit }: RedactionSt
 
   const handleMouseDown = (e: React.MouseEvent<HTMLDivElement> | React.TouchEvent<HTMLDivElement>) => {
     if (!isCanvasBasedMode) return;
+    if ("touches" in e && e.cancelable) {
+      e.preventDefault();
+    }
     const coords = getContainerCoords(e);
     setIsDrawing(true);
     setStartPos(coords);
@@ -308,6 +311,9 @@ export default function RedactionStudio({ file, onClose, onCommit }: RedactionSt
 
   const handleMouseMove = (e: React.MouseEvent<HTMLDivElement> | React.TouchEvent<HTMLDivElement>) => {
     if (!isDrawing || !startPos) return;
+    if ("touches" in e && e.cancelable) {
+      e.preventDefault();
+    }
     const coords = getContainerCoords(e);
 
     const x = Math.min(startPos.x, coords.x);
@@ -640,7 +646,7 @@ export default function RedactionStudio({ file, onClose, onCommit }: RedactionSt
                   onTouchStart={handleMouseDown}
                   onTouchMove={handleMouseMove}
                   onTouchEnd={handleMouseUp}
-                  className={`relative w-full bg-neutral-900 overflow-hidden border border-neutral-300 shadow-inner flex items-center justify-center select-none group ${
+                  className={`relative w-full bg-neutral-900 overflow-hidden border border-neutral-300 shadow-inner flex items-center justify-center select-none touch-none overscroll-none group ${
                     isFullScreen ? "flex-1 min-h-[500px]" : "aspect-[16/10] max-h-[540px] rounded-2xl cursor-crosshair"
                   }`}
                 >
