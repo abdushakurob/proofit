@@ -14,9 +14,11 @@ proofit.db-wal
 *.db
 *.sqlite
 
-# debug & environment
+# debug, logs & internal plans
 .env*.local
 *.log
+implementation_plan.md
+implementation plan.md
 
 # OS
 .DS_Store
