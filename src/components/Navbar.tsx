@@ -83,7 +83,7 @@ export default function Navbar() {
             </div>
           ) : (
             <Link
-              href="/login?redirect=workspace"
+              href="/login"
               className="inline-flex items-center justify-center px-4 py-2 rounded-xl font-bold text-white bg-black hover:bg-neutral-800 transition-all shadow-sm text-xs tracking-tight"
             >
               Officer Sign In

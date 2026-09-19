@@ -3,7 +3,7 @@
 import React, { useState, useRef } from "react";
 import {
   FolderOpen, Package, Download, EyeOff, Paperclip, FileText, Check, ShieldCheck,
-  Volume2, Film, Loader2, AlertCircle, FileCheck, ArrowRight, User, X, Upload, Lock
+  Volume2, Film, Loader2, AlertCircle, FileCheck, ArrowRight, User, X, Upload, Lock, Scissors, Sparkles
 } from "lucide-react";
 import { useAuth } from "@/contexts/AuthContext";
 import { useOffline } from "@/contexts/OfflineContext";
@@ -13,8 +13,9 @@ import { linkDerivative } from "@/modules/ledger/derivative";
 import { packProof, downloadProof, generateProofFileName } from "@/modules/container/pack";
 import { unpackProof } from "@/modules/container/unpack";
 import { verifyProof } from "@/modules/verifier/verify";
+import RedactionStudio from "@/components/RedactionStudio";
 import { get, set, del } from "idb-keyval";
-import type { Passport, CustodyRecord, VerificationResult } from "@/types";
+import { type Passport, type CustodyRecord, type VerificationResult, getMimeTypeFromName } from "@/types";
 
 const CHUNK_SIZE = 2 * 1024 * 1024;
 
@@ -59,7 +60,7 @@ export default function IntakeDesk() {
           </p>
         </div>
         <a
-          href="/login?redirect=workspace"
+          href="/login"
           className="inline-flex items-center justify-center gap-2 px-6 py-3.5 rounded-xl bg-black hover:bg-neutral-800 text-white font-bold text-xs shadow-md transition-all"
         >
           <span>Sign In as Officer</span>
@@ -82,6 +83,30 @@ export default function IntakeDesk() {
   const [derivativesList, setDerivativesList] = useState<File[]>([]);
   const [activePreviewFile, setActivePreviewFile] = useState<File | null>(null);
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
+  const [activeTextContent, setActiveTextContent] = useState<string | null>(null);
+
+  React.useEffect(() => {
+    if (!activePreviewFile) {
+      setActiveTextContent(null);
+      return;
+    }
+    const mime = getMimeTypeFromName(activePreviewFile.name, activePreviewFile.type);
+    if (
+      mime.startsWith("text/") ||
+      mime.includes("json") ||
+      mime.includes("csv") ||
+      activePreviewFile.name.endsWith(".txt") ||
+      activePreviewFile.name.endsWith(".csv") ||
+      activePreviewFile.name.endsWith(".json")
+    ) {
+      activePreviewFile
+        .text()
+        .then((txt) => setActiveTextContent(txt))
+        .catch(() => setActiveTextContent(null));
+    } else {
+      setActiveTextContent(null);
+    }
+  }, [activePreviewFile]);
 
   // New Pack State (Supports Multiple Files & Officer Sealing Note)
   const [newCaseId, setNewCaseId] = useState("");
@@ -95,6 +120,10 @@ export default function IntakeDesk() {
   const [targetCoverFileName, setTargetCoverFileName] = useState<string>("");
   const [redactFile, setRedactFile] = useState<File | null>(null);
   const [redactReason, setRedactReason] = useState<string>("");
+
+  // In-Browser Interactive Redaction Studio Modal State
+  const [showStudio, setShowStudio] = useState<boolean>(false);
+  const [studioTargetFile, setStudioTargetFile] = useState<File | null>(null);
 
   // Attach Supporting File Modal State (Supports Multi-File & Dropzone)
   const [showAttachModal, setShowAttachModal] = useState<boolean>(false);
@@ -230,6 +259,52 @@ export default function IntakeDesk() {
     }
   };
 
+  // Commit redaction created via native RedactionStudio modal
+  const handleCommitStudioRedaction = async (
+    redactedFile: File,
+    reasonStr: string,
+    redactionType: string = "Privacy Redaction",
+    tags: string[] = ["PII"],
+    similarityPercentage: number = 88.0
+  ) => {
+    if (!passport || !officer || !keypair || !primaryMediaFile) return;
+    setStatus("processing");
+    setStatusMsg(`Linking sealed redacted derivative "${redactedFile.name}" & computing Merkle seal...`);
+    try {
+      const targetName = studioTargetFile ? studioTargetFile.name : primaryMediaFile.name;
+      const auditReason = `Covering "${targetName}" with interactive redacted derivative — ${reasonStr}`;
+
+      const updatedPassport = await linkDerivative(
+        passport,
+        redactedFile,
+        auditReason,
+        officer,
+        keypair.privateKey,
+        keypair.publicKey,
+        redactionType,
+        tags,
+        similarityPercentage
+      );
+
+      const updatedDerivatives = [...derivativesList, redactedFile];
+      setPassport(updatedPassport);
+      setDerivativesList(updatedDerivatives);
+      setActivePreviewFile(redactedFile);
+      setPreviewUrl(URL.createObjectURL(redactedFile));
+
+      await saveActiveBagToStorage(updatedPassport, primaryMediaFile, updatedDerivatives);
+
+      setShowRedactModal(false);
+      setShowStudio(false);
+      setStudioTargetFile(null);
+      setStatus("done");
+      setStatusMsg(`Sealed redacted derivative "${redactedFile.name}" attached into evidence bag. (${redactionType}, ${similarityPercentage}% Intact)`);
+    } catch (err) {
+      setStatus("error");
+      setStatusMsg(err instanceof Error ? err.message : "Failed to link redacted derivative.");
+    }
+  };
+
   // Trigger file download helper with custody chain logging
   const triggerFileDownload = async (file: File) => {
     if (officer && keypair && passport) {
@@ -326,11 +401,11 @@ export default function IntakeDesk() {
   };
 
   // Create & Seal New Evidence Bag (Multiple Files Supported)
-  const handleCreateNewBag = async () => {
+  const handleCreateNewBag = async (shouldDownload: boolean = true) => {
     if (newFiles.length === 0 || !newCaseId || !officer || !keypair) return;
     if (!newSealingNote.trim()) {
       setStatus("error");
-      setStatusMsg("A note is required before creating and downloading the evidence container.");
+      setStatusMsg("A note is required before creating the evidence container.");
       return;
     }
     setStatus("processing");
@@ -394,12 +469,17 @@ export default function IntakeDesk() {
       setCaseTitle(newCaseTitle || `Exhibit: ${masterFile.name}`);
       setBagFileName(generatedBagName);
 
-      // Pack & Download container (with master file + extra supporting files)
-      const blob = await packProof(p, masterFile, extraFiles);
-      downloadProof(blob, generatedBagName);
+      saveActiveBagToStorage(p, masterFile, extraFiles);
+
+      if (shouldDownload) {
+        const blob = await packProof(p, masterFile, extraFiles);
+        downloadProof(blob, generatedBagName);
+        setStatusMsg(`Evidence container "${generatedBagName}" created, sealed, and downloaded (${newFiles.length} file${newFiles.length > 1 ? "s" : ""} enclosed).`);
+      } else {
+        setStatusMsg(`Evidence container "${generatedBagName}" created & sealed to workspace (${newFiles.length} file${newFiles.length > 1 ? "s" : ""} enclosed).`);
+      }
 
       setStatus("done");
-      setStatusMsg(`Evidence container "${generatedBagName}" created and downloaded (${newFiles.length} file${newFiles.length > 1 ? "s" : ""} enclosed).`);
       setWorkspaceMode("open_bag");
       setNewFiles([]);
       setNewSealingNote("");
@@ -453,14 +533,14 @@ export default function IntakeDesk() {
       setRedactStep(1);
       setTargetCoverFileName("");
       setRedactFile(null);
-      setRedactReason("");
-      setStatus("done");
       setStatusMsg(`Privacy redacted version attached! In Public/Courtroom view, "${targetCoverFileName || 'original'}" will be concealed and this redacted copy will be displayed.`);
     } catch (err) {
       setStatus("error");
       setStatusMsg(err instanceof Error ? err.message : "Failed to attach privacy redaction.");
     }
   };
+
+
 
   // Attach Supporting Files (Supports Multiple Files & Dropzone with Custody Signing)
   const handleAttachSupportingFiles = async () => {
@@ -624,8 +704,28 @@ export default function IntakeDesk() {
 
   const custodyHistory: CustodyRecord[] = passport?.history || [];
 
+  // Helper to test if a file is supported by in-browser Redaction Studio
+  const isRedactableFile = (file: File | null): boolean => {
+    if (!file) return false;
+    if (file.name.endsWith(".proof")) return false;
+    const mime = getMimeTypeFromName(file.name, file.type);
+    return (
+      mime.startsWith("image/") ||
+      mime.startsWith("video/") ||
+      mime === "application/pdf" ||
+      file.name.endsWith(".pdf") ||
+      mime.startsWith("text/") ||
+      file.name.endsWith(".txt") ||
+      file.name.endsWith(".csv") ||
+      file.name.endsWith(".json")
+    );
+  };
+
+  // Target file candidates for Cover Private Details modal (all enclosed files)
+  const targetFileCandidates = allEnclosedFiles;
+
   // Helper to find selected target file object for step 1 redaction download
-  const selectedTargetFileObj = allEnclosedFiles.find((ef) => ef.file.name === targetCoverFileName)?.file || primaryMediaFile;
+  const selectedTargetFileObj = targetFileCandidates.find((ef) => ef.file.name === targetCoverFileName)?.file || targetFileCandidates[0]?.file || null;
 
   return (
     <div className="bg-[#f9f9fa] text-[#1a1c1d] font-sans min-h-screen py-6 space-y-6">
@@ -795,16 +895,30 @@ export default function IntakeDesk() {
 
               {/* List of Selected Files for Packing */}
               {newFiles.length > 0 && (
-                <div className="space-y-2 bg-neutral-50 p-4 rounded-xl border border-neutral-200">
-                  <span className="text-xs font-bold text-black block">Selected Exhibits to Enclose ({newFiles.length}):</span>
+                <div className="space-y-2.5 bg-neutral-50 p-4 rounded-xl border border-neutral-200">
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs font-bold text-black">Enclosed Exhibits ({newFiles.length}):</span>
+                    <button
+                      type="button"
+                      onClick={() => newFileRef.current?.click()}
+                      className="text-xs font-semibold text-black hover:underline flex items-center gap-1"
+                    >
+                      <Paperclip className="w-3.5 h-3.5 text-neutral-600" />
+                      <span>+ Add Supporting Exhibits</span>
+                    </button>
+                  </div>
                   <div className="space-y-1.5 max-h-40 overflow-y-auto pr-1">
                     {newFiles.map((f, i) => (
                       <div key={i} className="flex items-center justify-between text-xs bg-white p-2.5 rounded-lg border border-neutral-200">
                         <div className="flex items-center gap-2 truncate">
                           <FileText className="w-4 h-4 text-neutral-600 flex-shrink-0" />
                           <span className="font-semibold text-black truncate">{f.name}</span>
-                          <span className="text-[11px] text-neutral-400 font-mono">({(f.size / 1024).toFixed(1)} KB)</span>
-                          {i === 0 && <span className="text-[10px] bg-black text-white px-1.5 py-0.5 rounded font-bold">Master Payload</span>}
+                          <span className="text-[10px] text-neutral-400 font-mono">({(f.size / 1024).toFixed(1)} KB)</span>
+                          {i === 0 ? (
+                            <span className="text-[10px] bg-black text-white px-1.5 py-0.5 rounded font-bold">Master Payload</span>
+                          ) : (
+                            <span className="text-[10px] bg-neutral-200 text-neutral-700 px-1.5 py-0.5 rounded font-bold">Supporting File</span>
+                          )}
                         </div>
                         <button
                           type="button"
@@ -824,7 +938,7 @@ export default function IntakeDesk() {
 
               {/* Officer Note Area for Sealing */}
               <div className="space-y-1.5">
-                <label className="block text-xs font-semibold text-neutral-800">Officer Sealing Note</label>
+                <label className="block text-xs font-semibold text-neutral-800">Officer Sealing Note *</label>
                 <textarea
                   value={newSealingNote}
                   onChange={(e) => setNewSealingNote(e.target.value)}
@@ -834,14 +948,26 @@ export default function IntakeDesk() {
                 />
               </div>
 
-              <button
-                disabled={newFiles.length === 0 || !newCaseId || status === "processing"}
-                onClick={handleCreateNewBag}
-                className="w-full py-4 bg-black hover:bg-neutral-800 disabled:opacity-40 text-white rounded-xl text-sm font-bold transition-all flex items-center justify-center gap-2 shadow-md"
-              >
-                {status === "processing" ? <Loader2 className="w-4 h-4 animate-spin" /> : <Package className="w-4 h-4" />}
-                <span>Generate & Download Sealed Evidence Bag (.proof)</span>
-              </button>
+              {/* Dual Action Buttons: Seal to Workspace vs Seal & Download */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-1">
+                <button
+                  disabled={newFiles.length === 0 || !newCaseId || status === "processing"}
+                  onClick={() => handleCreateNewBag(false)}
+                  className="py-3.5 px-4 bg-white hover:bg-neutral-100 border border-neutral-300 text-black rounded-xl text-xs font-bold transition-all flex items-center justify-center gap-2 shadow-xs"
+                >
+                  {status === "processing" ? <Loader2 className="w-4 h-4 animate-spin" /> : <ShieldCheck className="w-4 h-4 text-emerald-600" />}
+                  <span>Generate & Seal to Workspace</span>
+                </button>
+
+                <button
+                  disabled={newFiles.length === 0 || !newCaseId || status === "processing"}
+                  onClick={() => handleCreateNewBag(true)}
+                  className="py-3.5 px-4 bg-black hover:bg-neutral-800 disabled:opacity-40 text-white rounded-xl text-xs font-bold transition-all flex items-center justify-center gap-2 shadow-md"
+                >
+                  {status === "processing" ? <Loader2 className="w-4 h-4 animate-spin" /> : <Download className="w-4 h-4 text-emerald-400" />}
+                  <span>Generate, Seal & Download (.proof)</span>
+                </button>
+              </div>
             </div>
           ) : (
             <div className="w-full max-w-4xl mx-auto py-6 space-y-6">
@@ -916,24 +1042,41 @@ export default function IntakeDesk() {
             <div className="w-full bg-[#09090b] rounded-2xl overflow-hidden shadow-md flex flex-col border border-neutral-800">
               <div className="relative w-full aspect-video bg-[#09090b] flex items-center justify-center overflow-hidden">
                 
-                {activePreviewFile && previewUrl ? (
-                  activePreviewFile.type.startsWith("image/") ? (
-                    <img src={previewUrl} alt="Active preview" className="w-full h-full object-contain" />
-                  ) : activePreviewFile.type.startsWith("video/") ? (
-                    <video src={previewUrl} controls className="w-full h-full object-contain" />
-                  ) : activePreviewFile.type.startsWith("audio/") ? (
-                    <div className="p-8 text-center space-y-4">
-                      <Volume2 className="w-16 h-16 text-neutral-300 mx-auto" />
-                      <audio src={previewUrl} controls className="w-full max-w-md mx-auto" />
-                    </div>
-                  ) : (
-                    <div className="p-8 text-center space-y-3">
-                      <FileText className="w-16 h-16 text-neutral-400 mx-auto" />
-                      <p className="text-sm font-bold text-white">{activePreviewFile.name}</p>
-                      <p className="text-xs text-neutral-400">Document / Data File • {(activePreviewFile.size / 1024).toFixed(1)} KB</p>
-                    </div>
-                  )
-                ) : (
+                {activePreviewFile && previewUrl ? (() => {
+                  const effectiveMime = getMimeTypeFromName(activePreviewFile.name, activePreviewFile.type);
+                  if (effectiveMime.startsWith("image/")) {
+                    return <img src={previewUrl} alt="Active preview" className="w-full h-full object-contain bg-black" />;
+                  } else if (effectiveMime.startsWith("video/")) {
+                    return <video src={previewUrl} controls className="w-full h-full object-contain bg-black" />;
+                  } else if (effectiveMime.startsWith("audio/")) {
+                    return (
+                      <div className="p-8 text-center space-y-4">
+                        <Volume2 className="w-16 h-16 text-neutral-300 mx-auto" />
+                        <audio src={previewUrl} controls className="w-full max-w-md mx-auto" />
+                      </div>
+                    );
+                  } else if (effectiveMime === "application/pdf") {
+                    return <iframe src={previewUrl} title="PDF Preview" className="w-full h-full min-h-[360px] bg-white border-0" />;
+                  } else if (activeTextContent !== null) {
+                    return (
+                      <div className="w-full h-full p-4 bg-[#121316] text-neutral-200 font-mono text-xs overflow-auto leading-relaxed border border-neutral-800">
+                        <div className="text-[10px] text-neutral-400 uppercase tracking-wider mb-2 border-b border-neutral-800 pb-1.5 flex items-center justify-between">
+                          <span>Document Content View • {activePreviewFile.name}</span>
+                          <span>({(activePreviewFile.size / 1024).toFixed(1)} KB)</span>
+                        </div>
+                        <pre className="whitespace-pre-wrap font-mono text-neutral-200">{activeTextContent || "[Empty Document File]"}</pre>
+                      </div>
+                    );
+                  } else {
+                    return (
+                      <div className="p-8 text-center space-y-3">
+                        <FileText className="w-16 h-16 text-neutral-400 mx-auto" />
+                        <p className="text-sm font-bold text-white">{activePreviewFile.name}</p>
+                        <p className="text-xs text-neutral-400">Document / Data File • {(activePreviewFile.size / 1024).toFixed(1)} KB</p>
+                      </div>
+                    );
+                  }
+                })() : (
                   <div className="p-8 text-center space-y-2">
                     <FileText className="w-12 h-12 text-neutral-600 mx-auto" />
                     <p className="text-sm font-semibold text-neutral-300">No Active File Selected</p>
@@ -982,44 +1125,74 @@ export default function IntakeDesk() {
                 <p className="text-xs text-neutral-400 italic py-4 text-center">No files inside container.</p>
               ) : (
                 <div className="space-y-2.5">
-                  {allEnclosedFiles.map(({ file: f, isPrimary, isRedacted }, idx) => (
-                    <div
-                      key={idx}
-                      className={`p-3.5 rounded-xl border flex items-center justify-between gap-3 text-xs transition-all ${
-                        activePreviewFile?.name === f.name
-                          ? "bg-neutral-100 border-neutral-400 font-semibold"
-                          : "bg-[#f9f9fa] border-neutral-200 hover:bg-neutral-50"
-                      }`}
-                    >
+                  {allEnclosedFiles.map(({ file: f, isPrimary, isRedacted }, idx) => {
+                    const mime = getMimeTypeFromName(f.name, f.type);
+                    const isProofContainer = f.name.endsWith(".proof");
+                    const isRedactable = !isProofContainer && (
+                      mime.startsWith("image/") ||
+                      mime.startsWith("video/") ||
+                      mime === "application/pdf" ||
+                      f.name.endsWith(".pdf") ||
+                      mime.startsWith("text/") ||
+                      f.name.endsWith(".txt") ||
+                      f.name.endsWith(".csv") ||
+                      f.name.endsWith(".json")
+                    );
+
+                    return (
                       <div
-                        onClick={() => {
-                          setActivePreviewFile(f);
-                          setPreviewUrl(URL.createObjectURL(f));
-                        }}
-                        className="flex items-center gap-3 cursor-pointer flex-1 min-w-0"
+                        key={idx}
+                        className={`p-3.5 rounded-xl border flex items-center justify-between gap-3 text-xs transition-all ${
+                          activePreviewFile?.name === f.name
+                            ? "bg-neutral-100 border-neutral-400 font-semibold"
+                            : "bg-[#f9f9fa] border-neutral-200 hover:bg-neutral-50"
+                        }`}
                       >
-                        <FileText className="w-5 h-5 text-neutral-700 flex-shrink-0" />
-                        <div className="truncate">
-                          <span className="font-bold text-black block truncate">{f.name}</span>
-                          <span className="text-[11px] text-neutral-500 font-mono">
-                            {(f.size / 1024).toFixed(1)} KB • {f.type || "Document / Data File"}
-                            {isPrimary && <strong className="ml-2 text-black">[Master File]</strong>}
-                            {isRedacted && <strong className="ml-2 text-amber-700">[Privacy Redacted Copy]</strong>}
-                            {!isPrimary && !isRedacted && <strong className="ml-2 text-neutral-700">[Supporting Document]</strong>}
-                          </span>
+                        <div
+                          onClick={() => {
+                            setActivePreviewFile(f);
+                            setPreviewUrl(URL.createObjectURL(f));
+                          }}
+                          className="flex items-center gap-3 cursor-pointer flex-1 min-w-0"
+                        >
+                          <FileText className="w-5 h-5 text-neutral-700 flex-shrink-0" />
+                          <div className="truncate">
+                            <span className="font-bold text-black block truncate">{f.name}</span>
+                            <span className="text-[11px] text-neutral-500 font-mono">
+                              {(f.size / 1024).toFixed(1)} KB • {f.type || "Document / Data File"}
+                              {isPrimary && <strong className="ml-2 text-black">[Master File]</strong>}
+                              {isRedacted && <strong className="ml-2 text-amber-700">[Privacy Redacted Copy]</strong>}
+                              {!isPrimary && !isRedacted && <strong className="ml-2 text-neutral-700">[Supporting Document]</strong>}
+                            </span>
+                          </div>
+                        </div>
+
+                        <div className="flex items-center gap-2 flex-shrink-0">
+                          {isRedactable && (
+                            <button
+                              onClick={() => {
+                                setStudioTargetFile(f);
+                                setShowStudio(true);
+                              }}
+                              className="px-3 py-1.5 rounded-lg bg-black text-white hover:bg-neutral-800 transition-colors text-xs font-bold flex items-center gap-1.5"
+                              title="Open In-Browser Redaction Studio to mask faces/PII"
+                            >
+                              <Scissors className="w-3.5 h-3.5 text-emerald-400" />
+                              <span>Redact</span>
+                            </button>
+                          )}
+                          <button
+                            onClick={() => triggerFileDownload(f)}
+                            className="px-3 py-1.5 rounded-lg bg-neutral-200 hover:bg-black hover:text-white transition-colors text-xs font-medium flex items-center gap-1.5"
+                            title="Download file to computer"
+                          >
+                            <Download className="w-3.5 h-3.5" />
+                            <span>Download</span>
+                          </button>
                         </div>
                       </div>
-
-                      <button
-                        onClick={() => triggerFileDownload(f)}
-                        className="px-3 py-1.5 rounded-lg bg-neutral-200 hover:bg-black hover:text-white transition-colors text-xs font-medium flex items-center gap-1.5 flex-shrink-0"
-                        title="Download file to computer"
-                      >
-                        <Download className="w-3.5 h-3.5" />
-                        <span>Download</span>
-                      </button>
-                    </div>
-                  ))}
+                    );
+                  })}
                 </div>
               )}
             </div>
@@ -1138,7 +1311,7 @@ export default function IntakeDesk() {
                 onClick={() => {
                   setShowRedactModal(true);
                   setRedactStep(1);
-                  setTargetCoverFileName(primaryMediaFile?.name || "");
+                  setTargetCoverFileName(targetFileCandidates[0]?.file.name || "");
                 }}
                 className="flex flex-col text-left p-4 rounded-2xl bg-white hover:bg-neutral-100 border border-[#e4e4e7] shadow-xs transition-all group"
               >
@@ -1147,7 +1320,7 @@ export default function IntakeDesk() {
                 </div>
                 <span className="font-bold text-sm text-black">Cover Private Details</span>
                 <span className="text-xs text-neutral-500 mt-1 leading-snug">
-                  Redact face/PII. In courtroom view, only the redacted version is shown.
+                  Redact face/PII. In public/review view, only the redacted version is shown.
                 </span>
               </button>
 
@@ -1242,61 +1415,82 @@ export default function IntakeDesk() {
                   <span className="font-bold text-black block">Instructions for Redaction:</span>
                   <ol className="list-decimal pl-4 space-y-1">
                     <li>Select the target file below you wish to cover/redact.</li>
-                    <li>Click <strong>&quot;Download Selected File to Edit&quot;</strong> to save the original file to your computer.</li>
-                    <li>Mask sensitive PII or facial details using your computer software.</li>
-                    <li>Click <strong>&quot;Next: Upload Redacted Version&quot;</strong> to proceed.</li>
+                    <li>For supported media & documents, click <strong>&quot;Launch Interactive Redaction Studio&quot;</strong> to redact in-browser.</li>
+                    <li>For manual redaction or offline formats, click <strong>&quot;Download Selected File to Edit&quot;</strong> to edit on your workstation.</li>
+                    <li>Click <strong>&quot;Manual Upload: Attach Pre-Redacted Version&quot;</strong> to link your redacted copy.</li>
                   </ol>
                 </div>
 
                 <div>
                   <label className="block text-xs font-semibold text-neutral-800 mb-2">1. Select Target File to Redact *</label>
                   <div className="space-y-2 max-h-40 overflow-y-auto pr-1">
-                    {allEnclosedFiles.map(({ file: f, isPrimary, isRedacted }, i) => (
-                      <label
-                        key={i}
-                        className={`flex items-center justify-between p-3 rounded-xl border text-xs cursor-pointer transition-all ${
-                          targetCoverFileName === f.name
-                            ? "bg-neutral-100 border-black font-bold"
-                            : "bg-neutral-50 border-neutral-200 hover:bg-neutral-100"
-                        }`}
-                      >
-                        <div className="flex items-center gap-2.5 truncate">
-                          <input
-                            type="radio"
-                            name="targetCover"
-                            checked={targetCoverFileName === f.name}
-                            onChange={() => setTargetCoverFileName(f.name)}
-                            className="accent-black"
-                          />
-                          <span className="truncate text-black">{f.name}</span>
-                        </div>
-                        <span className="text-[10px] text-neutral-500 font-mono">
-                          {isPrimary ? "[Master File]" : isRedacted ? "[Redacted Copy]" : "[Supporting Document]"}
-                        </span>
-                      </label>
-                    ))}
+                    {targetFileCandidates.length === 0 ? (
+                      <div className="p-3 bg-neutral-50 rounded-xl border border-neutral-200 text-xs text-neutral-400 italic text-center">
+                        No files found in container.
+                      </div>
+                    ) : (
+                      targetFileCandidates.map(({ file: f, isPrimary, isRedacted }, i) => (
+                        <label
+                          key={i}
+                          className={`flex items-center justify-between p-3 rounded-xl border text-xs cursor-pointer transition-all ${
+                            targetCoverFileName === f.name
+                              ? "bg-neutral-100 border-black font-bold"
+                              : "bg-neutral-50 border-neutral-200 hover:bg-neutral-100"
+                          }`}
+                        >
+                          <div className="flex items-center gap-2.5 truncate">
+                            <input
+                              type="radio"
+                              name="targetCover"
+                              checked={targetCoverFileName === f.name}
+                              onChange={() => setTargetCoverFileName(f.name)}
+                              className="accent-black"
+                            />
+                            <span className="truncate text-black">{f.name}</span>
+                          </div>
+                          <span className="text-[10px] text-neutral-500 font-mono">
+                            {isPrimary ? "[Master File]" : isRedacted ? "[Redacted Copy]" : "[Supporting Document]"}
+                          </span>
+                        </label>
+                      ))
+                    )}
                   </div>
                 </div>
 
-                {/* Direct Download Button for Selected Target File */}
+                {/* Render Launch Interactive Redaction Studio ONLY when selectedTargetFileObj is supported */}
+                {selectedTargetFileObj && isRedactableFile(selectedTargetFileObj) && (
+                  <button
+                    onClick={() => {
+                      setStudioTargetFile(selectedTargetFileObj);
+                      setShowRedactModal(false);
+                      setShowStudio(true);
+                    }}
+                    className="w-full py-3.5 bg-black hover:bg-neutral-800 text-white rounded-xl text-xs font-bold transition-all flex items-center justify-center gap-2 shadow-md"
+                  >
+                    <Scissors className="w-4 h-4 text-emerald-400" />
+                    <span>Launch Interactive Redaction Studio</span>
+                  </button>
+                )}
+
+                {/* Manual Offline Download & Redact Flow (Available for all files) */}
                 {selectedTargetFileObj && (
                   <button
                     type="button"
                     onClick={() => triggerFileDownload(selectedTargetFileObj)}
-                    className="w-full py-2.5 bg-neutral-100 hover:bg-neutral-200 border border-neutral-300 text-black rounded-xl text-xs font-semibold flex items-center justify-center gap-2 transition-all"
+                    className="w-full py-2.5 bg-neutral-50 hover:bg-neutral-100 border border-neutral-200 text-neutral-700 rounded-xl text-xs font-medium flex items-center justify-center gap-2 transition-all"
                   >
-                    <Download className="w-4 h-4 text-black" />
-                    <span>Download &quot;{selectedTargetFileObj.name}&quot; to Edit</span>
+                    <Download className="w-3.5 h-3.5 text-neutral-500" />
+                    <span>Download &quot;{selectedTargetFileObj.name}&quot; to Edit Offline</span>
                   </button>
                 )}
 
                 <button
                   disabled={!targetCoverFileName}
                   onClick={() => setRedactStep(2)}
-                  className="w-full py-3.5 bg-black hover:bg-neutral-800 disabled:opacity-40 text-white rounded-xl text-xs font-bold transition-all flex items-center justify-center gap-1.5 shadow-sm"
+                  className="w-full py-2.5 bg-neutral-100 hover:bg-neutral-200 text-neutral-800 disabled:opacity-40 rounded-xl text-xs font-semibold transition-all flex items-center justify-center gap-1.5"
                 >
-                  <span>Next: Upload Redacted Version</span>
-                  <ArrowRight className="w-4 h-4" />
+                  <span>Manual Upload: Attach Pre-Redacted Version</span>
+                  <ArrowRight className="w-3.5 h-3.5" />
                 </button>
               </div>
             )}
@@ -1486,8 +1680,6 @@ export default function IntakeDesk() {
             <div className="flex items-center justify-between pt-2 border-t border-neutral-100">
               <a
                 href="/verify"
-                target="_blank"
-                rel="noreferrer"
                 className="text-xs font-semibold text-neutral-600 hover:text-black underline flex items-center gap-1"
               >
                 <span>View Full Public Verification Portal</span>
@@ -1502,6 +1694,15 @@ export default function IntakeDesk() {
             </div>
           </div>
         </div>
+      )}
+
+      {/* Native Redaction Studio Modal */}
+      {showStudio && (studioTargetFile || primaryMediaFile) && (
+        <RedactionStudio
+          file={studioTargetFile || primaryMediaFile!}
+          onClose={() => setShowStudio(false)}
+          onCommit={handleCommitStudioRedaction}
+        />
       )}
 
     </div>

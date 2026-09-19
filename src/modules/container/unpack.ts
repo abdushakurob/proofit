@@ -1,5 +1,6 @@
 import { unzipSync, strFromU8 } from "fflate";
 import type { Passport } from "@/types";
+import { getMimeTypeFromName } from "@/types";
 
 export interface UnpackResult {
   passport: Passport;
@@ -35,12 +36,14 @@ export async function unpackProof(proofBlob: Blob): Promise<UnpackResult> {
     if (path.startsWith("media/")) {
       const filename = path.slice("media/".length);
       if (filename) {
-        mediaFile = new File([data], filename);
+        const mimeType = getMimeTypeFromName(filename);
+        mediaFile = new File([data], filename, { type: mimeType });
       }
     } else if (path.startsWith("derivatives/")) {
       const filename = path.slice("derivatives/".length);
       if (filename) {
-        derivatives.push(new File([data], filename));
+        const mimeType = getMimeTypeFromName(filename);
+        derivatives.push(new File([data], filename, { type: mimeType }));
       }
     }
   }

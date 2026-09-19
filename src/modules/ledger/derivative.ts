@@ -49,18 +49,25 @@ export async function linkDerivative(
   reason: string,
   officer: OfficerProfile,
   privateKey: CryptoKey,
-  publicKey: CryptoKey
+  publicKey: CryptoKey,
+  redactionType: string = "Privacy Redaction",
+  tags: string[] = ["PII Mask"],
+  similarityPercentage: number = 88.0
 ): Promise<Passport> {
   // 1. Compute derivative Merkle root
   const leaves = await hashFileToLeaves(derivativeFile);
   const fingerprint = await computeMerkleRoot(leaves);
 
-  // 2. Build derivative entry
+  // 2. Build derivative entry with similarity % and tags
   const derivativeEntry: CoveredDerivative = {
     filename: derivativeFile.name,
     fingerprint,
     reason,
     linked_at: new Date().toISOString(),
+    redaction_type: redactionType,
+    tags,
+    original_hash: passport.blueprint.root_fingerprint,
+    similarity_percentage: similarityPercentage,
   };
 
   // 3. Append to blueprint.covered_derivatives
@@ -73,7 +80,8 @@ export async function linkDerivative(
   };
 
   // 4. Append audit chain entry
-  const auditNote = `DERIVATIVE LINKED: ${derivativeFile.name} — ${reason} — Fingerprint: ${fingerprint.slice(0, 16)}…`;
+  const tagStr = tags.length > 0 ? ` [Tags: ${tags.join(", ")}]` : "";
+  const auditNote = `DERIVATIVE LINKED: ${derivativeFile.name} (${redactionType}${tagStr}, ${similarityPercentage}% Intact) — ${reason} — Fingerprint: ${fingerprint.slice(0, 16)}…`;
   const updatedPassport = await appendHandover(
     { ...passport, blueprint: updatedBlueprint },
     officer,

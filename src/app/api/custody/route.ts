@@ -21,10 +21,12 @@ export async function POST(request: Request) {
       sync_status,
     } = body;
 
+    const targetEvidenceId = evidence_id || `EVD-${Date.now()}`;
+
     const maxSeqRes = await db
       .select({ maxSeq: max(custodyLedger.sequenceNumber) })
       .from(custodyLedger)
-      .where(eq(custodyLedger.evidenceId, evidence_id));
+      .where(eq(custodyLedger.evidenceId, targetEvidenceId));
 
     const maxSeq = maxSeqRes[0]?.maxSeq ?? 0;
     const nextSeq = maxSeq + 1;

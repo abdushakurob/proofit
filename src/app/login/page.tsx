@@ -191,17 +191,7 @@ function LoginContent() {
       }
 
       setStatus("idle");
-      
-      // Determine exact route destination
-      const destination = redirectTab.startsWith("/")
-        ? redirectTab
-        : redirectTab === "workspace" || redirectTab === "desk"
-        ? "/workspace"
-        : redirectTab === "verify" || redirectTab === "court"
-        ? "/verify"
-        : `/${redirectTab}`;
-
-      router.push(destination);
+      router.push("/workspace");
     } catch (err) {
       setStatus("error");
       setErrorMsg(err instanceof Error ? err.message : "Cryptographic passkey verification failed. Invalid master password.");
@@ -222,15 +212,13 @@ function LoginContent() {
             <span className="font-semibold text-lg tracking-tight text-black">ProofIt</span>
           </Link>
 
-          <a
+          <Link
             href="/oin"
-            target="_blank"
-            rel="noreferrer"
             className="px-3.5 py-1.5 rounded-md font-medium text-neutral-700 hover:text-black border border-neutral-300 bg-white hover:bg-neutral-50 transition-colors text-xs flex items-center gap-1.5"
           >
             <span>OIN Portal</span>
             <ExternalLink className="w-3 h-3 text-neutral-500" />
-          </a>
+          </Link>
         </div>
       </header>
 

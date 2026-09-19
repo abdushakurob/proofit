@@ -9,12 +9,43 @@ export interface OfficerProfile {
   publicStamp?: string;
 }
 
+/** Helper to infer correct MIME type from filename extension */
+export function getMimeTypeFromName(filename: string, fallbackType: string = ""): string {
+  if (fallbackType && fallbackType !== "application/octet-stream" && fallbackType !== "") {
+    return fallbackType;
+  }
+  const ext = filename.split('.').pop()?.toLowerCase();
+  switch (ext) {
+    case 'png': return 'image/png';
+    case 'jpg':
+    case 'jpeg': return 'image/jpeg';
+    case 'webp': return 'image/webp';
+    case 'gif': return 'image/gif';
+    case 'svg': return 'image/svg+xml';
+    case 'bmp': return 'image/bmp';
+    case 'mp4': return 'video/mp4';
+    case 'webm': return 'video/webm';
+    case 'mov': return 'video/quicktime';
+    case 'mp3': return 'audio/mpeg';
+    case 'wav': return 'audio/wav';
+    case 'pdf': return 'application/pdf';
+    case 'txt': return 'text/plain';
+    case 'csv': return 'text/csv';
+    case 'json': return 'application/json';
+    default: return fallbackType || 'application/octet-stream';
+  }
+}
+
 /** Derivative file entry linked to the original evidence */
 export interface CoveredDerivative {
   filename: string;
   fingerprint: string; // 64-char lowercase hex SHA-256 Merkle root
   reason: string;
   linked_at: string; // ISO 8601 date-time
+  redaction_type?: string;
+  tags?: string[];
+  original_hash?: string;
+  similarity_percentage?: number;
 }
 
 /** Blueprint section of passport.json — describes the evidence file */

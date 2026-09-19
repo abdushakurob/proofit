@@ -161,7 +161,7 @@ export default function LandingPage({ onOpenWorkspace }: LandingPageProps = {}) 
               </div>
               <h3 className="text-xl font-semibold text-black tracking-tight mb-3">Complete Local Operation</h3>
               <p className="text-sm text-neutral-600 leading-relaxed">
-                The system operates independently on local hardware. Investigative units and courtroom registries can process, update, and review evidence packages without network connectivity or external servers.
+                The system operates independently on local hardware. Investigative units and review registries can process, update, and review evidence packages without network connectivity or external servers.
               </p>
             </div>
           </div>
@@ -312,7 +312,7 @@ export default function LandingPage({ onOpenWorkspace }: LandingPageProps = {}) 
             <div>
               <h4 className="font-semibold text-black uppercase tracking-wider text-[11px] mb-3">Compliance</h4>
               <div className="flex flex-col space-y-2 text-neutral-600">
-                <a className="hover:text-black transition-colors" href="/oin" target="_blank" rel="noreferrer">OIN Portal</a>
+                <Link className="hover:text-black transition-colors" href="/oin">OIN Portal</Link>
                 <a className="hover:text-black transition-colors" href="#standards">Chain Rules</a>
                 <a className="hover:text-black transition-colors" href="#standards">ISO Standards</a>
               </div>
