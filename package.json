@@ -9,7 +9,9 @@
     "start": "next start",
     "lint": "next lint",
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "db:push": "drizzle-kit push",
+    "db:studio": "drizzle-kit studio"
   },
   "repository": {
     "type": "git",
@@ -28,6 +30,7 @@
   },
   "homepage": "https://github.com/abdushakurob/proofit#readme",
   "dependencies": {
+    "@libsql/client": "^0.18.0",
     "baseline-browser-mapping": "^2.11.25",
     "better-sqlite3": "^13.0.3",
     "canonicalize": "^5.0.0",
@@ -50,6 +53,7 @@
     "@types/node": "^22.0.0",
     "@types/react": "^19.0.0",
     "@types/react-dom": "^19.0.0",
+    "drizzle-kit": "^0.31.10",
     "jsdom": "^30.1.0",
     "postcss": "^8.5.0",
     "tailwindcss": "^4.1.0",

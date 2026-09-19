@@ -1,26 +1,32 @@
+import { createClient } from "@libsql/client";
+import { drizzle as drizzleLibsql } from "drizzle-orm/libsql";
+import { drizzle as drizzleBetterSqlite } from "drizzle-orm/better-sqlite3";
 import Database from "better-sqlite3";
-import { drizzle } from "drizzle-orm/better-sqlite3";
 import path from "path";
 import * as schema from "./schema";
 
-const DB_PATH = path.join(process.cwd(), "proofit.db");
-
-let sqliteInstance: Database.Database | null = null;
-let drizzleDbInstance: ReturnType<typeof drizzle<typeof schema>> | null = null;
-
-export function getRawSqlite(): Database.Database {
-  if (!sqliteInstance) {
-    sqliteInstance = new Database(DB_PATH);
-    sqliteInstance.pragma("journal_mode = WAL");
-    initTables(sqliteInstance);
-  }
-  return sqliteInstance;
-}
+let drizzleDbInstance: any = null;
 
 export function getDb() {
   if (!drizzleDbInstance) {
-    const sqlite = getRawSqlite();
-    drizzleDbInstance = drizzle(sqlite, { schema });
+    const tursoUrl = process.env.TURSO_DATABASE_URL;
+    const tursoAuthToken = process.env.TURSO_AUTH_TOKEN;
+
+    if (tursoUrl) {
+      // Production / Vercel Serverless: Turso Cloud SQLite
+      const client = createClient({
+        url: tursoUrl,
+        authToken: tursoAuthToken,
+      });
+      drizzleDbInstance = drizzleLibsql(client, { schema });
+    } else {
+      // Local Development / Offline fallback: Local SQLite file
+      const DB_PATH = path.join(process.cwd(), "proofit.db");
+      const sqlite = new Database(DB_PATH);
+      sqlite.pragma("journal_mode = WAL");
+      initTables(sqlite);
+      drizzleDbInstance = drizzleBetterSqlite(sqlite, { schema });
+    }
   }
   return drizzleDbInstance;
 }
