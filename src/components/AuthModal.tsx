@@ -37,34 +37,35 @@ export default function AuthModal({ onAuthenticated, isOpen = true, onClose, onN
     try {
       const cleanId = officerId.trim().toUpperCase();
       
-      // 1. Fetch live OIN roster from database/API
+      // 1. Fetch live OIN roster from database/API if online
       let fetchedProfile: OfficerProfile | null = null;
       try {
         const res = await fetch("/api/officers");
-        const data = await res.json();
-        
-        if (data.success && Array.isArray(data.officers)) {
-          const match = data.officers.find(
-            (o: { oin?: string; badge_id?: string; full_name?: string; rank?: string; agency?: string }) =>
-              (o.oin && o.oin.toUpperCase() === cleanId) ||
-              (o.badge_id && o.badge_id.toUpperCase() === cleanId)
-          );
+        if (res.ok) {
+          const data = await res.json();
+          if (data.success && Array.isArray(data.officers)) {
+            const match = data.officers.find(
+              (o: { oin?: string; badge_id?: string; full_name?: string; rank?: string; agency?: string }) =>
+                (o.oin && o.oin.toUpperCase() === cleanId) ||
+                (o.badge_id && o.badge_id.toUpperCase() === cleanId)
+            );
 
-          if (match) {
-            fetchedProfile = {
-              badgeId: match.oin || match.badge_id || cleanId,
-              fullName: match.full_name || `Officer ${cleanId}`,
-              idNumber: match.oin || match.badge_id || cleanId,
-              agency: match.agency || "Law Enforcement Agency",
-              rank: match.rank || "Investigating Officer",
-            };
+            if (match) {
+              fetchedProfile = {
+                badgeId: match.oin || match.badge_id || cleanId,
+                fullName: match.full_name || `Officer ${cleanId}`,
+                idNumber: match.oin || match.badge_id || cleanId,
+                agency: match.agency || "Law Enforcement Agency",
+                rank: match.rank || "Investigating Officer",
+              };
+            }
           }
         }
       } catch (err) {
         console.warn("Could not query live OIN API, falling back to identity derivation:", err);
       }
 
-      // 2. If not found in OIN yet, derive officer profile dynamically from entered ID
+      // 2. Fallback to dynamic identity derivation
       const profile: OfficerProfile = fetchedProfile || {
         badgeId: cleanId,
         fullName: `Officer ${cleanId}`,

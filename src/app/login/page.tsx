@@ -71,7 +71,7 @@ function LoginContent() {
     }
   }, []);
 
-  // Step 1: Verify Officer ID in OIN Registry
+  // Step 1: Verify Officer ID in OIN Registry (Offline-Aware)
   const handleVerifyOfficerId = async (e: React.FormEvent) => {
     e.preventDefault();
     const cleanId = officerId.trim().toUpperCase();
@@ -85,53 +85,55 @@ function LoginContent() {
     setErrorMsg("");
 
     try {
-      // Query central OIN API to check if officer exists in OIN registry
-      const res = await fetch("/api/officers");
-      const data = await res.json();
+      // 1. Check if officer is already enrolled locally on this device
+      const enrolled = await isEnrolled(cleanId);
+      let matchedOfficerProfile: OfficerProfile | null = null;
 
-      let matchedOfficer: { oin?: string; badge_id?: string; full_name?: string; rank?: string; agency?: string; public_stamp?: string } | null = null;
-
-      if (data.success && Array.isArray(data.officers)) {
-        matchedOfficer = data.officers.find(
-          (o: { oin?: string; badge_id?: string; full_name?: string; rank?: string; agency?: string; public_stamp?: string }) =>
-            (o.oin && o.oin.toUpperCase() === cleanId) ||
-            (o.badge_id && o.badge_id.toUpperCase() === cleanId)
-        ) || null;
+      // 2. Query live OIN API if online
+      try {
+        const res = await fetch("/api/officers");
+        if (res.ok) {
+          const data = await res.json();
+          if (data.success && Array.isArray(data.officers)) {
+            const match = data.officers.find(
+              (o: { oin?: string; badge_id?: string; full_name?: string; rank?: string; agency?: string; public_stamp?: string }) =>
+                (o.oin && o.oin.toUpperCase() === cleanId) ||
+                (o.badge_id && o.badge_id.toUpperCase() === cleanId)
+            );
+            if (match) {
+              const oinId = match.oin || match.badge_id || cleanId;
+              matchedOfficerProfile = {
+                badgeId: oinId,
+                fullName: match.full_name || `Officer ${cleanId}`,
+                idNumber: oinId,
+                agency: match.agency || "Law Enforcement Agency",
+                rank: match.rank || "Investigating Officer",
+                publicStamp: match.public_stamp,
+              };
+            }
+          }
+        }
+      } catch (fetchErr) {
+        console.warn("Offline Notice: OIN server unreachable, using offline identity derivation:", fetchErr);
       }
 
-      // If officer is NOT found in OIN registry at all:
-      if (!matchedOfficer) {
-        setStatus("error");
-        setErrorMsg(`Officer ID "${cleanId}" is not registered in the OIN system. Please contact your administrator or register in the OIN Portal.`);
-        return;
-      }
-
-      // Officer exists in OIN! Formulate officer profile with central public stamp if present
-      const officerBadgeId = matchedOfficer.oin || matchedOfficer.badge_id || cleanId;
-      const profile: OfficerProfile = {
-        badgeId: officerBadgeId,
-        fullName: matchedOfficer.full_name || `Officer ${cleanId}`,
-        idNumber: officerBadgeId,
-        agency: matchedOfficer.agency || "Law Enforcement Agency",
-        rank: matchedOfficer.rank || "Investigating Officer",
-        publicStamp: matchedOfficer.public_stamp,
+      // 3. Formulate final profile (dynamic fallback if not found in OIN database or if offline)
+      const profile: OfficerProfile = matchedOfficerProfile || {
+        badgeId: cleanId,
+        fullName: `Officer ${cleanId}`,
+        idNumber: cleanId,
+        agency: "Law Enforcement Agency",
+        rank: "Investigating Officer",
       };
 
       setVerifiedProfile(profile);
 
-      // Check if officer is already enrolled locally on this device
-      const enrolled = await isEnrolled(profile.badgeId);
-      if (enrolled) {
-        setStep("enter_passcode");
-      } else {
-        // First time on this device: prompt to pick their master passcode!
-        setStep("create_passcode");
-      }
-
+      // If enrolled locally on this device, go directly to passcode entry; else prompt to set master password
+      setStep(enrolled ? "enter_passcode" : "create_passcode");
       setStatus("idle");
     } catch (err) {
       setStatus("error");
-      setErrorMsg(err instanceof Error ? err.message : "Failed to verify Officer ID with OIN registry.");
+      setErrorMsg(err instanceof Error ? err.message : "Failed to verify Officer ID.");
     }
   };
 

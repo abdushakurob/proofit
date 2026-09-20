@@ -2,7 +2,7 @@
 
 import React, { useState } from "react";
 import { UserPlus, Shield, CheckCircle2, KeyRound, Building2, User, X, Loader2 } from "lucide-react";
-import { useAuth, DEMO_OFFICERS } from "@/contexts/AuthContext";
+import { useAuth } from "@/contexts/AuthContext";
 
 interface OfficerEnrollmentModalProps {
   isOpen: boolean;

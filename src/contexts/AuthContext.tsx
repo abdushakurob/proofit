@@ -12,43 +12,6 @@ import {
 import { saveProfile, loadProfile, hasProfile } from "@/modules/vault/profileStore";
 import { del } from "idb-keyval";
 
-/* ── Demo Officer Roster ─────────────────────────────────── */
-
-export const DEMO_OFFICERS = [
-  {
-    badgeId: "NGP-001",
-    fullName: "Inspector Adamu Bello",
-    idNumber: "AP/12345",
-    agency: "Nigeria Police Force",
-    rank: "Inspector",
-    defaultPassword: "demo123",
-  },
-  {
-    badgeId: "NGP-002",
-    fullName: "Sergeant Fatima Yusuf",
-    idNumber: "AP/67890",
-    agency: "Nigeria Police Force",
-    rank: "Sergeant",
-    defaultPassword: "demo123",
-  },
-  {
-    badgeId: "EFCC-001",
-    fullName: "Detective Chukwuma Obi",
-    idNumber: "EFCC/2024/001",
-    agency: "Economic & Financial Crimes Commission",
-    rank: "Lead Detective",
-    defaultPassword: "demo123",
-  },
-  {
-    badgeId: "DSS-001",
-    fullName: "Agent Halima Musa",
-    idNumber: "DSS/5501",
-    agency: "Department of State Services",
-    rank: "Senior Agent",
-    defaultPassword: "demo123",
-  },
-] as const;
-
 /* ── Context Definition ──────────────────────────────────── */
 
 interface AuthContextValue extends AuthState {
@@ -112,14 +75,16 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     const publicStamp = await exportPublicStamp(keypair.publicKey);
 
     let officer: OfficerProfile;
-    if (profile) {
+    const profileExists = await hasProfile(badgeId);
+
+    if (profileExists) {
       try {
-        const stored = await loadProfile(badgeId, password);
-        officer = stored;
+        officer = await loadProfile(badgeId, password);
       } catch (err) {
-        // If AES-GCM decryption failed or profile missing
-        officer = { ...profile, publicStamp };
+        throw new Error("Invalid Master Password: The password entered does not match your registered credentials.");
       }
+    } else if (profile) {
+      officer = { ...profile, publicStamp };
     } else {
       officer = await loadProfile(badgeId, password);
     }
