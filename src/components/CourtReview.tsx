@@ -755,7 +755,7 @@ export default function CourtReview({ onVerified }: CourtReviewProps = {}) {
                           return (
                             <div key={idx} className="relative flex items-start gap-3">
                               <div className="w-7 h-7 rounded-full bg-black text-white flex items-center justify-center shrink-0 z-10 font-bold text-xs shadow-xs">
-                                ✓
+                                <Check className="w-3.5 h-3.5 text-white" />
                               </div>
                               <div className="flex flex-col flex-1 bg-[#f9f9fa] p-3.5 rounded-xl border border-neutral-200 text-xs space-y-1">
                                 <div className="flex justify-between items-center">

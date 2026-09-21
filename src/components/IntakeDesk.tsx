@@ -3,7 +3,7 @@
 import React, { useState, useRef } from "react";
 import {
   FolderOpen, Package, Download, EyeOff, Paperclip, FileText, Check, ShieldCheck,
-  Volume2, Film, Loader2, AlertCircle, FileCheck, ArrowRight, User, X, Upload, Lock, Scissors, Sparkles
+  Volume2, Film, Loader2, AlertCircle, FileCheck, ArrowRight, User, X, Upload, Lock, Scissors, Sparkles, XCircle
 } from "lucide-react";
 import { useAuth } from "@/contexts/AuthContext";
 import { useOffline } from "@/contexts/OfflineContext";
@@ -215,7 +215,16 @@ export default function IntakeDesk() {
           setCaseTitle(stored.passport.evidenceMetadata?.originalFileName ? `Exhibit: ${stored.passport.evidenceMetadata.originalFileName}` : `Case: ${stored.passport.case_id}`);
           setWorkspaceMode("open_bag");
           setStatus("done");
-          setStatusMsg(`Restored active evidence bag "${stored.passport.case_id}" for Officer ${officer.fullName}.`);
+
+          // Auto-verify restored bag
+          verifyProof(stored.passport, master).then((res) => {
+            setVerificationResult(res);
+            if (!res.overall) {
+              setStatusMsg(`Warning: Active container "${stored.passport.case_id}" loaded — TAMPERING DETECTED.`);
+            } else {
+              setStatusMsg(`Restored active evidence bag "${stored.passport.case_id}" for Officer ${officer.fullName}.`);
+            }
+          }).catch(() => {});
         }
       } catch (err) {
         console.warn("Failed to restore active container on refresh:", err);
@@ -358,6 +367,7 @@ export default function IntakeDesk() {
     setStatus("processing");
     setStatusMsg("Unpacking & verifying evidence container...");
     setBagFileName(proofBlob.name);
+    setVerificationResult(null);
 
     try {
       const { passport: p, mediaFile: m, derivatives: d } = await unpackProof(proofBlob);
@@ -392,9 +402,41 @@ export default function IntakeDesk() {
 
       saveActiveBagToStorage(currentPassport, m, d);
 
+      // Instantly run cryptographic verification on open
+      try {
+        const vResult = await verifyProof(currentPassport, m);
+        setVerificationResult(vResult);
+        if (!vResult.overall) {
+          setStatusMsg(`Warning: Container "${proofBlob.name}" opened — TAMPERING DETECTED: File content or signature check failed.`);
+        } else {
+          setStatusMsg(`Evidence container "${proofBlob.name}" unpacked. Access audit entry signed for ${officer.fullName} (${officer.badgeId}).`);
+        }
+      } catch (e) {
+        setVerificationResult({
+          pass1: false,
+          pass2: false,
+          overall: false,
+          details: [{
+            pass: false,
+            label: "Container Integrity Error",
+            message: "Container data or manifest structure is corrupt or tampered with.",
+          }],
+        });
+        setStatusMsg(`Warning: Container "${proofBlob.name}" opened — TAMPERING DETECTED: Container structure modified.`);
+      }
+
       setStatus("done");
-      setStatusMsg(`Evidence container "${proofBlob.name}" unpacked. Access audit entry signed for ${officer.fullName} (${officer.badgeId}).`);
     } catch (err) {
+      setVerificationResult({
+        pass1: false,
+        pass2: false,
+        overall: false,
+        details: [{
+          pass: false,
+          label: "Container Integrity Error",
+          message: err instanceof Error ? err.message : "Failed to unpack .proof container structure",
+        }],
+      });
       setStatus("error");
       setStatusMsg(err instanceof Error ? err.message : "Failed to unpack .proof container");
     }
@@ -784,44 +826,79 @@ export default function IntakeDesk() {
       </div>
 
       {primaryMediaFile && (
-        <div className="w-full bg-white rounded-2xl p-4 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 shadow-xs border border-[#e4e4e7]">
-          <div className="flex items-center gap-2.5 flex-wrap text-xs">
-            <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-emerald-100 text-emerald-900 font-bold text-xs">
-              <ShieldCheck className="w-4 h-4 text-emerald-700" />
-              Tamper-Sealed Container Open
-            </span>
-            <span className="text-neutral-400 hidden sm:inline">•</span>
-            <span className="font-mono text-neutral-600 text-xs">
-              Bag File: <strong className="text-black">{bagFileName || primaryMediaFile.name}</strong>
-            </span>
-          </div>
+        <div className="space-y-4">
+          {verificationResult && !verificationResult.overall && (
+            <div className="w-full bg-rose-50 border-2 border-rose-300 rounded-2xl p-5 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 text-rose-950 shadow-sm">
+              <div className="flex items-start sm:items-center gap-3">
+                <div className="w-10 h-10 rounded-xl bg-rose-600 text-white flex items-center justify-center shrink-0 shadow-xs">
+                  <XCircle className="w-6 h-6" />
+                </div>
+                <div>
+                  <h3 className="font-bold text-sm text-rose-950">Container Tampering Alert Triggered</h3>
+                  <p className="text-xs text-rose-800 mt-0.5">
+                    Warning: Container structure, cryptographic Merkle fingerprint, or custody signature checks failed. This evidence container has been modified or corrupted.
+                  </p>
+                </div>
+              </div>
+              <button
+                onClick={() => setShowVerifyModal(true)}
+                className="px-4 py-2 bg-rose-700 hover:bg-rose-800 text-white rounded-xl text-xs font-bold shrink-0 shadow-xs cursor-pointer"
+              >
+                View Audit Breakdown
+              </button>
+            </div>
+          )}
 
-          <div className="flex items-center gap-2">
-            <button
-              onClick={handleVerifyOpenBag}
-              disabled={isVerifyingBag}
-              className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-black hover:bg-neutral-800 text-white font-bold text-xs shadow-sm transition-all disabled:opacity-50"
-              title="Run full cryptographic SHA-256 Merkle root & ECDSA signature audit on this bag"
-            >
-              {isVerifyingBag ? (
-                <>
-                  <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                  <span>Verifying…</span>
-                </>
+          <div className="w-full bg-white rounded-2xl p-4 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 shadow-xs border border-[#e4e4e7]">
+            <div className="flex items-center gap-2.5 flex-wrap text-xs">
+              {verificationResult && !verificationResult.overall ? (
+                <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-rose-100 text-rose-900 border border-rose-300 font-bold text-xs">
+                  <XCircle className="w-4 h-4 text-rose-700" />
+                  Tamper Alert Triggered — Verification Failed
+                </span>
               ) : (
-                <>
-                  <ShieldCheck className="w-4 h-4 text-emerald-400" />
-                  <span>Verify Bag Integrity</span>
-                </>
+                <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-emerald-100 text-emerald-900 font-bold text-xs">
+                  <ShieldCheck className="w-4 h-4 text-emerald-700" />
+                  Tamper-Sealed Container Open
+                </span>
               )}
-            </button>
-            <button
-              onClick={handleClearWorkspace}
-              className="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl border border-neutral-200 bg-white hover:bg-neutral-100 text-neutral-600 hover:text-black font-semibold text-xs transition-colors"
-            >
-              <X className="w-3.5 h-3.5" />
-              <span>Close Bag</span>
-            </button>
+              <span className="text-neutral-400 hidden sm:inline">•</span>
+              <span className="font-mono text-neutral-600 text-xs">
+                Bag File: <strong className="text-black">{bagFileName || primaryMediaFile.name}</strong>
+              </span>
+            </div>
+
+            <div className="flex items-center gap-2">
+              <button
+                onClick={handleVerifyOpenBag}
+                disabled={isVerifyingBag}
+                className={`inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl font-bold text-xs shadow-sm transition-all disabled:opacity-50 cursor-pointer ${
+                  verificationResult && !verificationResult.overall
+                    ? "bg-rose-600 hover:bg-rose-700 text-white"
+                    : "bg-black hover:bg-neutral-800 text-white"
+                }`}
+                title="Run full cryptographic SHA-256 Merkle root & ECDSA signature audit on this bag"
+              >
+                {isVerifyingBag ? (
+                  <>
+                    <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                    <span>Verifying…</span>
+                  </>
+                ) : (
+                  <>
+                    <ShieldCheck className={`w-4 h-4 ${verificationResult && !verificationResult.overall ? "text-white" : "text-emerald-400"}`} />
+                    <span>{verificationResult && !verificationResult.overall ? "View Tamper Audit" : "Verify Bag Integrity"}</span>
+                  </>
+                )}
+              </button>
+              <button
+                onClick={handleClearWorkspace}
+                className="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl border border-neutral-200 bg-white hover:bg-neutral-100 text-neutral-600 hover:text-black font-semibold text-xs transition-colors cursor-pointer"
+              >
+                <X className="w-3.5 h-3.5" />
+                <span>Close Bag</span>
+              </button>
+            </div>
           </div>
         </div>
       )}
@@ -1263,7 +1340,7 @@ export default function IntakeDesk() {
                     return (
                       <div key={idx} className="relative flex items-start gap-3">
                         <div className="w-7 h-7 rounded-full bg-black text-white flex items-center justify-center shrink-0 z-10 font-bold text-xs shadow-xs">
-                          ✓
+                          <Check className="w-3.5 h-3.5 text-white" />
                         </div>
                         <div className="flex flex-col flex-1 bg-[#f9f9fa] p-3.5 rounded-xl border border-neutral-200 text-xs space-y-1">
                           <div className="flex justify-between items-center">
@@ -1288,7 +1365,7 @@ export default function IntakeDesk() {
                   {officer && (
                     <div className="relative flex items-start gap-3 pt-1">
                       <div className="w-7 h-7 rounded-full bg-emerald-600 text-white flex items-center justify-center shrink-0 z-10 font-bold text-xs shadow-xs">
-                        ★
+                        <ShieldCheck className="w-3.5 h-3.5 text-white" />
                       </div>
                       <div className="flex flex-col flex-1 bg-emerald-50/60 p-3.5 rounded-xl border border-emerald-200 text-xs space-y-1">
                         <div className="flex justify-between items-center">
