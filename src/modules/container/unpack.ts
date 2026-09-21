@@ -16,40 +16,86 @@ export interface UnpackResult {
  */
 export async function unpackProof(proofBlob: Blob): Promise<UnpackResult> {
   const buffer = await proofBlob.arrayBuffer();
-  const unzipped = unzipSync(new Uint8Array(buffer));
+  let unzipped: Record<string, Uint8Array>;
 
-  // 1. Extract passport.json
-  const passportEntry = unzipped["passport.json"];
-  if (!passportEntry) {
-    throw new Error("Invalid .proof container: missing passport.json");
+  try {
+    unzipped = unzipSync(new Uint8Array(buffer));
+  } catch (zipErr) {
+    throw new Error("Container File Corrupted: The archive structure is damaged or unreadable.");
   }
-  const passportJson = strFromU8(passportEntry);
-  const passport: Passport = JSON.parse(passportJson);
 
-  // 2. Extract media file(s) — expect exactly one in media/
+  // 1. Extract passport.json safely
+  const passportEntry = unzipped["passport.json"];
+  let passport: Passport;
+
+  if (!passportEntry) {
+    passport = {
+      format_version: "1.0",
+      case_id: "TAMPERED-MANIFEST",
+      blueprint: {
+        chunk_size_bytes: 2097152,
+        total_file_size: 0,
+        chunk_count: 0,
+        root_fingerprint: "0".repeat(64),
+        original_filename: "Tampered_Manifest_Evidence",
+      },
+      history: [],
+    };
+  } else {
+    try {
+      const passportJson = strFromU8(passportEntry);
+      passport = JSON.parse(passportJson);
+    } catch (jsonErr) {
+      passport = {
+        format_version: "1.0",
+        case_id: "TAMPERED-MANIFEST",
+        blueprint: {
+          chunk_size_bytes: 2097152,
+          total_file_size: 0,
+          chunk_count: 0,
+          root_fingerprint: "0".repeat(64),
+          original_filename: "Tampered_Manifest_Evidence",
+        },
+        history: [],
+      };
+    }
+  }
+
+  // 2. Extract media file(s) — expect in media/ or root ZIP entries
   let mediaFile: File | null = null;
   const derivatives: File[] = [];
 
   for (const [path, data] of Object.entries(unzipped)) {
-    if (path === "passport.json") continue;
+    if (path === "passport.json" || path.endsWith("/")) continue;
 
     if (path.startsWith("media/")) {
       const filename = path.slice("media/".length);
-      if (filename) {
+      if (filename && !filename.endsWith("/")) {
         const mimeType = getMimeTypeFromName(filename);
-        mediaFile = new File([data], filename, { type: mimeType });
+        mediaFile = new File([new Uint8Array(data)], filename, { type: mimeType });
       }
     } else if (path.startsWith("derivatives/")) {
       const filename = path.slice("derivatives/".length);
-      if (filename) {
+      if (filename && !filename.endsWith("/")) {
         const mimeType = getMimeTypeFromName(filename);
-        derivatives.push(new File([data], filename, { type: mimeType }));
+        derivatives.push(new File([new Uint8Array(data)], filename, { type: mimeType }));
       }
     }
   }
 
+  // Fallback: If no media/ folder entry, grab any non-passport payload file in the ZIP archive
   if (!mediaFile) {
-    throw new Error("Invalid .proof container: missing media file");
+    for (const [path, data] of Object.entries(unzipped)) {
+      if (path === "passport.json" || path.endsWith("/")) continue;
+      const cleanName = path.split("/").pop() || "evidence_payload";
+      const mimeType = getMimeTypeFromName(cleanName);
+      mediaFile = new File([new Uint8Array(data)], cleanName, { type: mimeType });
+      break;
+    }
+  }
+
+  if (!mediaFile) {
+    mediaFile = new File([new Uint8Array(0)], "Tampered_Payload.bin", { type: "application/octet-stream" });
   }
 
   return { passport, mediaFile, derivatives };

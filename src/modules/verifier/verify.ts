@@ -69,54 +69,52 @@ async function verifyPass1(
     // Hash the media file
     const leaves = await hashFileToLeaves(mediaFile, onProgress);
     const computedRoot = await computeMerkleRoot(leaves);
-    const expectedRoot = passport.blueprint.root_fingerprint;
 
     // Check chunk count
-    const chunkCountMatch = leaves.length === passport.blueprint.chunk_count;
+    const chunkCountMatch = leaves.length === (passport.blueprint?.chunk_count || 0);
     details.push({
       pass: chunkCountMatch,
-      label: "Chunk Count",
+      label: "Data Structure Integrity",
       message: chunkCountMatch
-        ? `Chunk count matches: ${leaves.length}`
-        : `Chunk count mismatch: expected ${passport.blueprint.chunk_count}, got ${leaves.length}`,
+        ? "Container file structure verified authentic."
+        : "Container structure modified: File internal organization does not match the official seal record.",
     });
 
     // Check file size
-    const sizeMatch = mediaFile.size === passport.blueprint.total_file_size;
+    const expectedSize = passport.blueprint?.total_file_size || 0;
+    const sizeMatch = mediaFile.size === expectedSize;
     details.push({
       pass: sizeMatch,
-      label: "File Size",
+      label: "Evidence File Byte Size",
       message: sizeMatch
-        ? `File size matches: ${mediaFile.size} bytes`
-        : `File size mismatch: expected ${passport.blueprint.total_file_size}, got ${mediaFile.size}`,
+        ? "File size matches original sealed record."
+        : "File size altered: Evidence payload size differs from the registered seal.",
     });
 
     // Check Merkle root (Original Evidence OR Sealed Redacted Derivative)
-    const derivatives = passport.blueprint.covered_derivatives || [];
-    const originalRootMatch = computedRoot === expectedRoot;
+    const derivatives = passport.blueprint?.covered_derivatives || [];
+    const expectedRoot = passport.blueprint?.root_fingerprint || "";
+    const originalRootMatch = Boolean(expectedRoot && computedRoot === expectedRoot);
     const matchingDerivative = derivatives.find((d) => d.fingerprint === computedRoot);
-    const rootMatch = originalRootMatch || !!matchingDerivative;
 
     if (originalRootMatch) {
       details.push({
         pass: true,
-        label: "Merkle Root (Original Evidence)",
-        message: `100% Cryptographic Match — Original unredacted evidence file verified (${computedRoot.slice(0, 16)}…).`,
+        label: "Cryptographic Fingerprint Audit",
+        message: "Digital seal verified 100% authentic — Evidence file content is untouched.",
       });
     } else if (matchingDerivative) {
       const tagStr = matchingDerivative.tags?.length ? ` [Tags: ${matchingDerivative.tags.join(", ")}]` : "";
       details.push({
         pass: true,
-        label: "Merkle Root (Sealed Redacted Derivative)",
-        message: `100% Cryptographic Match with Sealed Derivative "${matchingDerivative.filename}" (${matchingDerivative.redaction_type || "Privacy Redaction"}${tagStr}, ${matchingDerivative.similarity_percentage ?? 88.0}% Content Intact).`,
+        label: "Cryptographic Fingerprint Audit (Redacted Copy)",
+        message: `Digital seal matches registered derivative "${matchingDerivative.filename}" (${matchingDerivative.redaction_type || "Privacy Redaction"}${tagStr}).`,
       });
     } else {
-      const sizeRatio = Math.min(mediaFile.size, passport.blueprint.total_file_size) / Math.max(mediaFile.size, passport.blueprint.total_file_size);
-      const estSimilarity = Math.round(sizeRatio * 85.0 * 10) / 10;
       details.push({
         pass: false,
-        label: "Merkle Root",
-        message: `Merkle root MISMATCH: Expected original ${expectedRoot.slice(0, 16)}…, computed ${computedRoot.slice(0, 16)}…. Estimated Content Similarity: ${estSimilarity}%.`,
+        label: "Cryptographic Fingerprint Audit",
+        message: "Digital seal mismatch: Evidence content has been modified since initial sealing.",
       });
     }
 
@@ -124,15 +122,15 @@ async function verifyPass1(
     if (derivatives.length > 0) {
       details.push({
         pass: true,
-        label: "Registered Derivatives",
-        message: `${derivatives.length} sealed derivative copy/copies recorded in evidence passport.`,
+        label: "Registered Redacted Derivatives",
+        message: `${derivatives.length} privacy-masked derivative copy/copies recorded in evidence passport.`,
       });
     }
   } catch (err) {
     details.push({
       pass: false,
-      label: "Pass 1 Error",
-      message: `Media integrity check failed: ${err instanceof Error ? err.message : "Unknown error"}`,
+      label: "Cryptographic Fingerprint Audit",
+      message: "Media integrity check failed: Evidence payload unreadable or corrupted.",
     });
   }
 
@@ -143,13 +141,13 @@ async function verifyPass1(
 
 async function verifyPass2(passport: Passport): Promise<VerificationDetail[]> {
   const details: VerificationDetail[] = [];
-  const history = passport.history;
+  const history = passport.history || [];
 
   if (history.length === 0) {
     details.push({
       pass: false,
-      label: "Empty Chain",
-      message: "No custody records found in passport history.",
+      label: "Chain of Custody History",
+      message: "Custody record incomplete: No officer handover records or signatures found.",
     });
     return details;
   }
@@ -159,33 +157,34 @@ async function verifyPass2(passport: Passport): Promise<VerificationDetail[]> {
   const genesisAnchorValid = genesis.previous_signature === GENESIS_PREV_SIG;
   details.push({
     pass: genesisAnchorValid,
-    label: "Genesis Anchor",
+    label: "Initial Sealing Anchor",
     message: genesisAnchorValid
-      ? "Genesis record has valid null anchor (0000…0000)."
-      : `Genesis record has invalid previous_signature: ${genesis.previous_signature.slice(0, 16)}…`,
+      ? "Genesis record anchor verified authentic."
+      : "Initial seal broken: The original sealing record anchor is invalid or tampered with.",
   });
 
   const genesisIndexValid = genesis.index === 0;
   details.push({
     pass: genesisIndexValid,
-    label: "Genesis Index",
+    label: "Genesis Record Index",
     message: genesisIndexValid
-      ? "Genesis record index is 0."
-      : `Genesis record has invalid index: ${genesis.index}`,
+      ? "Genesis record sequence index verified."
+      : "Custody log corrupted: Initial record sequence index is invalid.",
   });
 
   // Verify each record's signature and chain linkage
   for (let i = 0; i < history.length; i++) {
     const record = history[i];
+    const officerName = record.data?.full_name || record.actorName || `Officer #${i + 1}`;
 
     // Index continuity
     const indexValid = record.index === i;
     details.push({
       pass: indexValid,
-      label: `Record ${i} Index`,
+      label: `Record ${i + 1} Sequence`,
       message: indexValid
-        ? `Record ${i} index is sequential.`
-        : `Record ${i} has out-of-order index: ${record.index}`,
+        ? `Handover entry #${i + 1} sequence verified.`
+        : `Custody log corrupted: Handover entry #${i + 1} is out of sequence.`,
     });
 
     // Chain linkage (skip genesis — already checked)
@@ -194,29 +193,37 @@ async function verifyPass2(passport: Passport): Promise<VerificationDetail[]> {
       const linkValid = record.previous_signature === prevRecord.signature;
       details.push({
         pass: linkValid,
-        label: `Record ${i} Chain Link`,
+        label: `Record ${i + 1} Handover Link`,
         message: linkValid
-          ? `Record ${i} correctly links to record ${i - 1}.`
-          : `Record ${i} chain link BROKEN: previous_signature does not match record ${i - 1} signature.`,
+          ? `Handover #${i + 1} correctly linked to preceding officer seal.`
+          : `Custody chain broken: Handover #${i + 1} seal does not match preceding record.`,
       });
     }
 
     // ECDSA signature verification
     try {
+      if (!record.public_stamp) {
+        details.push({
+          pass: false,
+          label: `Record ${i + 1} Digital Stamp (${officerName})`,
+          message: `Missing digital signature: Handover entry #${i + 1} lacks an official officer key.`,
+        });
+        continue;
+      }
       const publicKey = await importPublicKey(record.public_stamp);
       const sigValid = await verifySignature(record, publicKey);
       details.push({
         pass: sigValid,
-        label: `Record ${i} Signature`,
+        label: `Record ${i + 1} Digital Stamp (${officerName})`,
         message: sigValid
-          ? `Record ${i} ECDSA signature verified (${record.data.full_name}).`
-          : `Record ${i} ECDSA signature INVALID for ${record.data.full_name}.`,
+          ? `Officer digital signature verified authentic (${officerName}).`
+          : `Digital signature invalid: Signature seal for ${officerName} has been tampered with or forged.`,
       });
     } catch (err) {
       details.push({
         pass: false,
-        label: `Record ${i} Signature`,
-        message: `Record ${i} signature verification error: ${err instanceof Error ? err.message : "Unknown error"}`,
+        label: `Record ${i + 1} Digital Stamp (${officerName})`,
+        message: `Signature verification error for ${officerName}: Official digital stamp key is unreadable or corrupted.`,
       });
     }
   }

@@ -20,9 +20,10 @@
   ],
   "file_handlers": [
     {
-      "action": "/",
+      "action": "/verify",
       "accept": {
-        "application/x-proof": [".proof"]
+        "application/x-proof": [".proof"],
+        "application/octet-stream": [".proof"]
       }
     }
   ]

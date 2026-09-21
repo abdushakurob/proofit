@@ -222,13 +222,43 @@ export default function CourtReview({ onVerified }: CourtReviewProps = {}) {
     }
   };
 
+  // Listen for PWA OS File Launch events (.proof double-click or Open With)
+  React.useEffect(() => {
+    if (typeof window !== "undefined" && "launchQueue" in window) {
+      try {
+        (window as any).launchQueue.setConsumer(async (launchParams: any) => {
+          if (launchParams && launchParams.files && launchParams.files.length > 0) {
+            const fileHandle = launchParams.files[0];
+            const file = await fileHandle.getFile();
+            if (file) {
+              setProofFile(file);
+              processVerification(file);
+            }
+          }
+        });
+      } catch (err) {
+        console.warn("PWA LaunchQueue notice:", err);
+      }
+    }
+  }, []);
+
   const processVerification = async (fileToProcess?: File) => {
     const targetFile = fileToProcess || proofFile;
     if (!targetFile) return;
 
+    // Reset all previous state before verifying new file
+    setProofFile(targetFile);
     setStatus("verifying");
     setProgress(0);
     setResult(null);
+    setPassport(null);
+    setOriginalMedia(null);
+    setDerivativesList([]);
+    setFinalPayload(null);
+    if (mediaPreviewUrl) {
+      URL.revokeObjectURL(mediaPreviewUrl);
+      setMediaPreviewUrl(null);
+    }
 
     try {
       const { passport: p, mediaFile: m, derivatives: d } = await unpackProof(targetFile);
@@ -247,8 +277,10 @@ export default function CourtReview({ onVerified }: CourtReviewProps = {}) {
       setFinalPayload(activeFinalFile);
       setIsDerivative(derivativeFlag);
 
-      const previewUrl = URL.createObjectURL(activeFinalFile);
-      setMediaPreviewUrl(previewUrl);
+      try {
+        const previewUrl = URL.createObjectURL(activeFinalFile);
+        setMediaPreviewUrl(previewUrl);
+      } catch (_) {}
 
       const verificationResult = await verifyProof(p, m, setProgress);
       verificationResult.isValid = verificationResult.overall;
@@ -260,7 +292,7 @@ export default function CourtReview({ onVerified }: CourtReviewProps = {}) {
           originalFileName: m.name,
           fileType: m.type,
           fileSizeBytes: m.size,
-          merkleRootHex: p.blueprint.root_fingerprint,
+          merkleRootHex: p.blueprint?.root_fingerprint || "",
           sealedAtTimestamp: p.history[0]?.timestamp,
           sealedByOfficerBadge: p.history[0]?.data?.id_number,
         };
@@ -276,8 +308,8 @@ export default function CourtReview({ onVerified }: CourtReviewProps = {}) {
         overall: false,
         details: [{
           pass: false,
-          label: "Container Error",
-          message: err instanceof Error ? err.message : "Failed to process .proof container",
+          label: "Container Integrity Error",
+          message: err instanceof Error ? err.message : "Failed to process .proof container structure",
         }],
       });
       setStatus("done");
@@ -297,7 +329,10 @@ export default function CourtReview({ onVerified }: CourtReviewProps = {}) {
     setFinalPayload(null);
     setResult(null);
     setStatus("idle");
-    setMediaPreviewUrl(null);
+    if (mediaPreviewUrl) {
+      URL.revokeObjectURL(mediaPreviewUrl);
+      setMediaPreviewUrl(null);
+    }
   };
 
   const custodyHistory: CustodyRecord[] = passport?.history || [];
@@ -370,8 +405,16 @@ export default function CourtReview({ onVerified }: CourtReviewProps = {}) {
                 </p>
               </div>
               {proofFile && (
-                <div className="inline-flex items-center gap-2 bg-emerald-50 border border-emerald-300 px-4 py-2 rounded-full text-xs text-emerald-800 font-bold">
-                  <CheckCircle2 className="w-4 h-4 text-emerald-600" />
+                <div className={`inline-flex items-center gap-2 border px-4 py-2 rounded-full text-xs font-bold ${
+                  result && !result.overall
+                    ? "bg-rose-50 border-rose-300 text-rose-800"
+                    : "bg-emerald-50 border-emerald-300 text-emerald-800"
+                }`}>
+                  {result && !result.overall ? (
+                    <XCircle className="w-4 h-4 text-rose-600" />
+                  ) : (
+                    <CheckCircle2 className="w-4 h-4 text-emerald-600" />
+                  )}
                   <span>Loaded File: {proofFile.name} ({(proofFile.size / 1024 / 1024).toFixed(2)} MB)</span>
                 </div>
               )}
@@ -379,14 +422,15 @@ export default function CourtReview({ onVerified }: CourtReviewProps = {}) {
           )}
         </div>
 
-        {status === "done" && result && passport && (
+        {status === "done" && result && (
           <div className="space-y-6">
 
             <div className="bg-white rounded-2xl p-6 shadow-xs border border-[#e4e4e7] space-y-5">
               <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4 pb-4 border-b border-neutral-100">
                 <div className="flex items-center gap-3">
-                  <div className={`w-12 h-12 rounded-xl flex items-center justify-center text-white shrink-0 shadow-xs ${result.overall ? "bg-emerald-600" : "bg-rose-600"
-                    }`}>
+                  <div className={`w-12 h-12 rounded-xl flex items-center justify-center text-white shrink-0 shadow-xs ${
+                    result.overall ? "bg-emerald-600" : "bg-rose-600"
+                  }`}>
                     {result.overall ? <CheckCircle2 className="w-7 h-7" /> : <XCircle className="w-7 h-7" />}
                   </div>
                   <div>
@@ -400,286 +444,369 @@ export default function CourtReview({ onVerified }: CourtReviewProps = {}) {
                     <p className="text-xs text-neutral-500 mt-0.5">
                       {result.overall
                         ? "Digital stamps and fingerprint hashes verified 100% authentic across the chain of custody."
-                        : "Warning: Container data or signature continuity check failed."}
+                        : "Warning: Container data, hash fingerprint, or signature continuity check failed."}
                     </p>
                   </div>
                 </div>
 
-                <div className="flex items-center gap-2 self-start lg:self-center bg-neutral-100 px-3.5 py-1.5 rounded-xl border border-neutral-200 text-xs">
-                  <ShieldCheck className="w-4 h-4 text-emerald-700" />
-                  <span className="font-bold text-black">Tamper Proof Secured</span>
+                <div className={`flex items-center gap-2 self-start lg:self-center px-3.5 py-1.5 rounded-xl border text-xs ${
+                  result.overall
+                    ? "bg-emerald-50 border-emerald-200 text-emerald-900"
+                    : "bg-rose-50 border-rose-200 text-rose-900"
+                }`}>
+                  <ShieldCheck className={`w-4 h-4 ${result.overall ? "text-emerald-700" : "text-rose-700"}`} />
+                  <span className="font-bold">{result.overall ? "Tamper Proof Secured" : "Tamper Alert Triggered"}</span>
                 </div>
               </div>
 
-              <div className="grid grid-cols-2 md:grid-cols-4 gap-4 bg-[#f9f9fa] rounded-xl p-4 border border-neutral-200 text-xs">
-                <div>
-                  <span className="text-neutral-500 block uppercase text-[10px] tracking-wider font-mono">Case Number</span>
-                  <span className="font-bold text-black text-sm mt-0.5 block">{passport.case_id || "N/A"}</span>
-                </div>
-                <div>
-                  <span className="text-neutral-500 block uppercase text-[10px] tracking-wider font-mono">Sealing Date</span>
-                  <span className="font-bold text-black text-sm mt-0.5 block">
-                    {passport.evidenceMetadata?.sealedAtTimestamp
-                      ? new Date(passport.evidenceMetadata.sealedAtTimestamp).toLocaleDateString()
-                      : "N/A"}
-                  </span>
-                </div>
-                <div>
-                  <span className="text-neutral-500 block uppercase text-[10px] tracking-wider font-mono">Verified Handlers</span>
-                  <span className="font-bold text-black text-sm mt-0.5 block">{custodyHistory.length} Officers & Specialists</span>
-                </div>
-                <div>
-                  <span className="text-neutral-500 block uppercase text-[10px] tracking-wider font-mono">Integrity Check</span>
-                  <span className="font-bold text-emerald-700 text-sm mt-0.5 block flex items-center gap-1">
-                    <CheckCircle2 className="w-4 h-4 text-emerald-600" />
-                    Passed All Checks
-                  </span>
-                </div>
-              </div>
-
-              <div className="space-y-2 pt-2 border-t border-neutral-100">
-                <h3 className="text-xs font-bold uppercase tracking-wider text-neutral-500 font-mono flex items-center gap-1.5">
-                  <FileText className="w-3.5 h-3.5 text-black" />
-                  Evidence Item Details
-                </h3>
-                <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-3 bg-[#f9f9fa] rounded-xl p-4 border border-neutral-200 text-xs">
+              {passport ? (
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-4 bg-[#f9f9fa] rounded-xl p-4 border border-neutral-200 text-xs">
                   <div>
-                    <span className="text-neutral-500 block uppercase text-[10px] tracking-wider font-mono">Original File Name</span>
-                    <span className="font-bold text-black break-all text-xs mt-0.5 block">
-                      {passport.evidenceMetadata?.originalFileName || passport.blueprint?.original_filename || originalMedia?.name || "Evidence_Payload"}
+                    <span className="text-neutral-500 block uppercase text-[10px] tracking-wider font-mono">Case Number</span>
+                    <span className="font-bold text-black text-sm mt-0.5 block">{passport.case_id || "N/A"}</span>
+                  </div>
+                  <div>
+                    <span className="text-neutral-500 block uppercase text-[10px] tracking-wider font-mono">Sealing Date</span>
+                    <span className="font-bold text-black text-sm mt-0.5 block">
+                      {passport.evidenceMetadata?.sealedAtTimestamp
+                        ? new Date(passport.evidenceMetadata.sealedAtTimestamp).toLocaleDateString()
+                        : "N/A"}
                     </span>
                   </div>
                   <div>
-                    <span className="text-neutral-500 block uppercase text-[10px] tracking-wider font-mono">File Type & Size</span>
-                    <span className="font-bold text-black text-xs mt-0.5 block">
-                      {originalMedia?.type || passport.evidenceMetadata?.fileType || "application/octet-stream"} ({( (originalMedia?.size || passport.evidenceMetadata?.fileSizeBytes || 0) / 1024).toFixed(1)} KB)
-                    </span>
+                    <span className="text-neutral-500 block uppercase text-[10px] tracking-wider font-mono">Verified Handlers</span>
+                    <span className="font-bold text-black text-sm mt-0.5 block">{custodyHistory.length} Officers & Specialists</span>
                   </div>
                   <div>
-                    <span className="text-neutral-500 block uppercase text-[10px] tracking-wider font-mono">Sealing Officer</span>
-                    <span className="font-bold text-black text-xs mt-0.5 block">
-                      {custodyHistory[0]?.data?.full_name || custodyHistory[0]?.actorName || passport.evidenceMetadata?.sealedByOfficerBadge || "Unspecified"}
-                    </span>
-                  </div>
-                  <div>
-                    <span className="text-neutral-500 block uppercase text-[10px] tracking-wider font-mono">Digital Seal Fingerprint</span>
-                    <span className="font-mono font-bold text-black break-all text-[11px] mt-0.5 block">
-                      {passport.blueprint?.root_fingerprint ? `${passport.blueprint.root_fingerprint.slice(0, 18)}…` : "N/A"}
-                    </span>
-                  </div>
-                </div>
-              </div>
-            </div>
-
-            <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
-
-              <div className="lg:col-span-7 space-y-6">
-                <div className="bg-white rounded-2xl p-6 shadow-xs border border-[#e4e4e7] space-y-4">
-                  <div className="flex justify-between items-center border-b border-neutral-100 pb-3">
-                    <div>
-                      <h3 className="text-base font-bold text-black">Evidence Item Preview</h3>
-                      <p className="text-xs text-neutral-500 mt-0.5">
-                        {isDerivative
-                          ? "Public Redacted Payload (Original concealed to protect privacy)"
-                          : "Direct stream from sealed container file payload"}
-                      </p>
-                    </div>
-                    {isDerivative && (
-                      <span className="px-2.5 py-1 rounded-full bg-amber-100 text-amber-900 font-bold text-[11px]">
-                        Privacy Redacted
+                    <span className="text-neutral-500 block uppercase text-[10px] tracking-wider font-mono">Integrity Check</span>
+                    {result.overall ? (
+                      <span className="font-bold text-emerald-700 text-sm mt-0.5 block flex items-center gap-1">
+                        <CheckCircle2 className="w-4 h-4 text-emerald-600" />
+                        Passed All Checks
+                      </span>
+                    ) : (
+                      <span className="font-bold text-rose-700 text-sm mt-0.5 block flex items-center gap-1">
+                        <XCircle className="w-4 h-4 text-rose-600" />
+                        Verification Failed
                       </span>
                     )}
                   </div>
+                </div>
+              ) : (
+                <div className="bg-rose-50 border border-rose-200 rounded-xl p-4 text-xs text-rose-900 space-y-1">
+                  <div className="font-bold text-sm text-rose-950 flex items-center gap-2">
+                    <XCircle className="w-4 h-4 text-rose-600" />
+                    <span>Corrupted or Manipulated Container Structure</span>
+                  </div>
+                  <p className="text-rose-700">
+                    The loaded .proof file does not contain a valid evidence record or media content.
+                  </p>
+                </div>
+              )}
 
-                  {finalPayload && mediaPreviewUrl && (
-                    <div className="bg-neutral-900 rounded-2xl overflow-hidden border border-neutral-800 p-4 text-center">
-                      {finalPayload.type.startsWith("image/") ? (
-                        <img
-                          src={mediaPreviewUrl}
-                          alt="Evidence payload preview"
-                          className="max-h-96 mx-auto rounded-lg object-contain shadow-md"
-                        />
-                      ) : finalPayload.type.startsWith("video/") ? (
-                        <video
-                          src={mediaPreviewUrl}
-                          controls
-                          className="max-h-96 w-full mx-auto rounded-lg shadow-md"
-                        />
+              {/* Detailed Verification Audit Breakdown Log */}
+              <div className="space-y-3 pt-2 border-t border-neutral-100">
+                <h3 className="text-xs font-bold uppercase tracking-wider text-neutral-500 font-mono flex items-center justify-between">
+                  <span className="flex items-center gap-1.5">
+                    <Hash className="w-3.5 h-3.5 text-black" />
+                    Automated Verification Audit Breakdown ({result.details.length} Tests)
+                  </span>
+                  <span className={`text-[11px] font-bold px-2 py-0.5 rounded ${result.overall ? "bg-emerald-100 text-emerald-900" : "bg-rose-100 text-rose-900"}`}>
+                    {result.overall ? "100% VERIFIED" : "VERIFICATION FAILED"}
+                  </span>
+                </h3>
+
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-2.5">
+                  {result.details.map((detail, idx) => (
+                    <div
+                      key={idx}
+                      className={`p-3 rounded-xl border text-xs flex items-start gap-2.5 ${
+                        detail.pass
+                          ? "bg-emerald-50/50 border-emerald-200 text-emerald-950"
+                          : "bg-rose-50 border-rose-200 text-rose-950 font-medium"
+                      }`}
+                    >
+                      {detail.pass ? (
+                        <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0 mt-0.5" />
                       ) : (
-                        <div className="py-8 space-y-3">
-                          <FileText className="w-12 h-12 text-white mx-auto" />
-                          <p className="text-sm font-bold text-white">{finalPayload.name}</p>
-                          <p className="text-xs text-neutral-400">Document / Data File • {(finalPayload.size / 1024).toFixed(1)} KB</p>
+                        <XCircle className="w-4 h-4 text-rose-600 shrink-0 mt-0.5" />
+                      )}
+                      <div className="space-y-0.5 break-all">
+                        <div className="font-bold flex items-center justify-between gap-2">
+                          <span>{detail.label}</span>
+                          <span className={`text-[10px] font-mono font-bold px-1.5 py-0.2 rounded uppercase ${
+                            detail.pass ? "bg-emerald-200 text-emerald-900" : "bg-rose-200 text-rose-900"
+                          }`}>
+                            {detail.pass ? "PASS" : "FAIL"}
+                          </span>
+                        </div>
+                        <p className="text-[11px] leading-relaxed opacity-90">{detail.message}</p>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              {passport && (
+                <div className="space-y-2 pt-2 border-t border-neutral-100">
+                  <h3 className="text-xs font-bold uppercase tracking-wider text-neutral-500 font-mono flex items-center gap-1.5">
+                    <FileText className="w-3.5 h-3.5 text-black" />
+                    Evidence Item Details
+                  </h3>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-3 bg-[#f9f9fa] rounded-xl p-4 border border-neutral-200 text-xs">
+                    <div>
+                      <span className="text-neutral-500 block uppercase text-[10px] tracking-wider font-mono">Original File Name</span>
+                      <span className="font-bold text-black break-all text-xs mt-0.5 block">
+                        {passport.evidenceMetadata?.originalFileName || passport.blueprint?.original_filename || originalMedia?.name || "Evidence_Payload"}
+                      </span>
+                    </div>
+                    <div>
+                      <span className="text-neutral-500 block uppercase text-[10px] tracking-wider font-mono">File Type & Size</span>
+                      <span className="font-bold text-black text-xs mt-0.5 block">
+                        {originalMedia?.type || passport.evidenceMetadata?.fileType || "application/octet-stream"} ({( (originalMedia?.size || passport.evidenceMetadata?.fileSizeBytes || 0) / 1024).toFixed(1)} KB)
+                      </span>
+                    </div>
+                    <div>
+                      <span className="text-neutral-500 block uppercase text-[10px] tracking-wider font-mono">Sealing Officer</span>
+                      <span className="font-bold text-black text-xs mt-0.5 block">
+                        {custodyHistory[0]?.data?.full_name || custodyHistory[0]?.actorName || passport.evidenceMetadata?.sealedByOfficerBadge || "Unspecified"}
+                      </span>
+                    </div>
+                    <div>
+                      <span className="text-neutral-500 block uppercase text-[10px] tracking-wider font-mono">Digital Seal Fingerprint</span>
+                      <span className="font-mono font-bold text-black break-all text-[11px] mt-0.5 block">
+                        {passport.blueprint?.root_fingerprint ? `${passport.blueprint.root_fingerprint.slice(0, 18)}…` : "N/A"}
+                      </span>
+                    </div>
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {passport && (
+              <>
+                <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
+
+                  <div className="lg:col-span-7 space-y-6">
+                    <div className="bg-white rounded-2xl p-6 shadow-xs border border-[#e4e4e7] space-y-4">
+                      <div className="flex justify-between items-center border-b border-neutral-100 pb-3">
+                        <div>
+                          <h3 className="text-base font-bold text-black">Evidence Item Preview</h3>
+                          <p className="text-xs text-neutral-500 mt-0.5">
+                            {isDerivative
+                              ? "Public Redacted Payload (Original concealed to protect privacy)"
+                              : "Direct stream from sealed container file payload"}
+                          </p>
+                        </div>
+                        {isDerivative && (
+                          <span className="px-2.5 py-1 rounded-full bg-amber-100 text-amber-900 font-bold text-[11px]">
+                            Privacy Redacted
+                          </span>
+                        )}
+                      </div>
+
+                      {finalPayload && mediaPreviewUrl && (
+                        <div className="bg-neutral-900 rounded-2xl overflow-hidden border border-neutral-800 p-4 text-center">
+                          {finalPayload.type.startsWith("image/") ? (
+                            <img
+                              src={mediaPreviewUrl}
+                              alt="Evidence payload preview"
+                              className="max-h-96 mx-auto rounded-lg object-contain shadow-md"
+                            />
+                          ) : finalPayload.type.startsWith("video/") ? (
+                            <video
+                              src={mediaPreviewUrl}
+                              controls
+                              className="max-h-96 w-full mx-auto rounded-lg shadow-md"
+                            />
+                          ) : (
+                            <div className="py-8 space-y-3">
+                              <FileText className="w-12 h-12 text-white mx-auto" />
+                              <p className="text-sm font-bold text-white">{finalPayload.name}</p>
+                              <p className="text-xs text-neutral-400">Document / Data File • {(finalPayload.size / 1024).toFixed(1)} KB</p>
+                            </div>
+                          )}
                         </div>
                       )}
-                    </div>
-                  )}
 
-                  {finalPayload && (
-                    <div className="flex flex-wrap items-center justify-between gap-3 pt-2">
-                      <div>
-                        <h4 className="font-bold text-sm text-black">{finalPayload.name}</h4>
-                        <p className="text-xs text-neutral-500">
-                          {(finalPayload.size / 1024 / 1024).toFixed(2)} MB • {finalPayload.type || "Document / Data File"}
-                        </p>
-                      </div>
-                      <button
-                        onClick={() => triggerFileDownload(finalPayload)}
-                        className="px-4 py-2 rounded-xl bg-black hover:bg-neutral-800 text-white font-bold text-xs flex items-center gap-1.5 transition-all shadow-xs cursor-pointer"
-                      >
-                        <Download className="w-4 h-4 text-white" />
-                        <span>Download File</span>
-                      </button>
-                    </div>
-                  )}
-
-                  <div className="mt-4 pt-4 border-t border-neutral-100 space-y-3">
-                    <h4 className="text-xs font-bold text-black">Included Files ({1 + derivativesList.length})</h4>
-
-                    {originalMedia && (() => {
-                      const isMasterCovered = Boolean(
-                        passport.blueprint?.covered_derivatives && passport.blueprint.covered_derivatives.length > 0
-                      );
-
-                      if (isMasterCovered) return null;
-
-                      return (
-                        <div className="p-3 bg-[#f9f9fa] rounded-xl border border-neutral-200 flex items-center justify-between text-xs">
-                          <div className="flex items-center gap-2.5 truncate">
-                            <FileText className="w-4 h-4 text-neutral-600 flex-shrink-0" />
-                            <div className="truncate">
-                              <span className="font-semibold text-black truncate block">{originalMedia.name}</span>
-                            </div>
-                            <span className="text-[10px] bg-black text-white px-2 py-0.5 rounded font-bold">Original File</span>
+                      {finalPayload && (
+                        <div className="flex flex-wrap items-center justify-between gap-3 pt-2">
+                          <div>
+                            <h4 className="font-bold text-sm text-black">{finalPayload.name}</h4>
+                            <p className="text-xs text-neutral-500">
+                              {(finalPayload.size / 1024 / 1024).toFixed(2)} MB • {finalPayload.type || "Document / Data File"}
+                            </p>
                           </div>
                           <button
-                            onClick={() => triggerFileDownload(originalMedia)}
-                            className="text-xs font-semibold text-neutral-700 hover:text-black flex items-center gap-1 flex-shrink-0 cursor-pointer"
+                            onClick={() => triggerFileDownload(finalPayload)}
+                            className="px-4 py-2 rounded-xl bg-black hover:bg-neutral-800 text-white font-bold text-xs flex items-center gap-1.5 transition-all shadow-xs cursor-pointer"
                           >
-                            <span>Download</span>
-                            <ArrowUpRight className="w-3.5 h-3.5" />
+                            <Download className="w-4 h-4 text-white" />
+                            <span>Download File</span>
                           </button>
                         </div>
-                      );
-                    })()}
+                      )}
 
-                    {derivativesList.map((d, i) => {
-                      const coveredEntry = passport.blueprint?.covered_derivatives?.find(
-                        (cd) => cd.filename === d.name
-                      );
-                      const isRedactedCopy = Boolean(coveredEntry);
+                      <div className="mt-4 pt-4 border-t border-neutral-100 space-y-3">
+                        <h4 className="text-xs font-bold text-black">Included Files ({1 + derivativesList.length})</h4>
 
-                      return (
-                        <div key={i} className="p-3 bg-[#f9f9fa] rounded-xl border border-neutral-200 flex items-center justify-between text-xs">
-                          <div className="flex items-center gap-2.5 truncate min-w-0">
-                            <FileText className="w-4 h-4 text-neutral-600 flex-shrink-0" />
-                            <div className="truncate min-w-0">
-                              <span className="font-semibold text-black truncate block">{d.name}</span>
-                              {coveredEntry?.reason && (
-                                <span className="text-[11px] text-neutral-500 block truncate mt-0.5">
-                                  Description: {coveredEntry.reason}
-                                </span>
-                              )}
-                            </div>
-                            {isRedactedCopy ? (
-                              <span className="text-[10px] bg-amber-100 text-amber-900 px-2 py-0.5 rounded font-bold flex-shrink-0">
-                                Redacted
-                              </span>
-                            ) : (
-                              <span className="text-[10px] bg-neutral-200 text-neutral-800 px-2 py-0.5 rounded font-bold flex-shrink-0">
-                                Supporting Document
-                              </span>
-                            )}
-                          </div>
-                          <button
-                            onClick={() => triggerFileDownload(d)}
-                            className="text-xs font-semibold text-neutral-700 hover:text-black flex items-center gap-1 flex-shrink-0 cursor-pointer"
-                          >
-                            <span>Download</span>
-                            <ArrowUpRight className="w-3.5 h-3.5" />
-                          </button>
-                        </div>
-                      );
-                    })}
-                  </div>
+                        {originalMedia && (() => {
+                          const isMasterCovered = Boolean(
+                            passport.blueprint?.covered_derivatives && passport.blueprint.covered_derivatives.length > 0
+                          );
 
-                  {passport.blueprint?.covered_derivatives && passport.blueprint.covered_derivatives.length > 0 && (
-                    <div className="mt-4 pt-4 border-t border-neutral-100 space-y-2">
-                      <div className="flex items-center gap-2 text-xs font-bold text-amber-900">
-                        <EyeOff className="w-4 h-4 text-amber-700" />
-                        <span>Privacy Redacted Copies Details ({passport.blueprint.covered_derivatives.length})</span>
-                      </div>
-                      {passport.blueprint.covered_derivatives.map((d, i) => (
-                        <div key={i} className="p-3 bg-amber-50/60 rounded-xl border border-amber-200 text-xs space-y-1">
-                          <div><span className="text-neutral-500">Redacted File:</span> <strong className="text-black">{d.filename}</strong></div>
-                          <div><span className="text-neutral-500">Redaction Note:</span> <span className="text-neutral-800 italic">&ldquo;{d.reason}&rdquo;</span></div>
-                          <div><span className="text-neutral-500">Applied Date:</span> <span className="text-neutral-600 font-mono text-[11px]">{new Date(d.linked_at).toLocaleString()}</span></div>
-                        </div>
-                      ))}
-                    </div>
-                  )}
+                          if (isMasterCovered) return null;
 
-                </div>
-              </div>
-
-              <div className="lg:col-span-5 space-y-6">
-                <div className="bg-white rounded-2xl p-6 shadow-xs border border-[#e4e4e7] space-y-4">
-                  <div>
-                    <h3 className="text-base font-bold text-black">Complete Handover Record</h3>
-                    <p className="text-xs text-neutral-500 mt-0.5">Transparent audit timeline of officer handovers & notes.</p>
-                  </div>
-
-                  <div className="relative flex flex-col gap-4 mt-2 pl-2 max-h-[380px] overflow-y-auto pr-1">
-                    <div className="absolute left-4 top-3 bottom-5 w-0.5 bg-neutral-200"></div>
-
-                    {custodyHistory.map((rec, idx) => {
-                      const name = rec.data?.full_name || "Officer";
-                      const badgeId = rec.data?.id_number || "";
-                      const agency = rec.data?.agency || "Law Enforcement Agency";
-                      const note = rec.data?.note || "";
-
-                      return (
-                        <div key={idx} className="relative flex items-start gap-3">
-                          <div className="w-7 h-7 rounded-full bg-black text-white flex items-center justify-center shrink-0 z-10 font-bold text-xs shadow-xs">
-                            ✓
-                          </div>
-                          <div className="flex flex-col flex-1 bg-[#f9f9fa] p-3.5 rounded-xl border border-neutral-200 text-xs space-y-1">
-                            <div className="flex justify-between items-center">
-                              <h4 className="font-bold text-black">{name}</h4>
-                              {badgeId && <span className="text-[10px] font-mono text-neutral-400">{badgeId}</span>}
-                            </div>
-                            <p className="text-neutral-500 text-[11px]">{agency}</p>
-                            {note && (
-                              <div className="text-xs text-neutral-800 bg-white p-2.5 rounded-lg border border-neutral-200 mt-1 leading-relaxed">
-                                <span className="font-semibold text-black block mb-0.5">Note / Action:</span>
-                                &ldquo;{note}&rdquo;
+                          return (
+                            <div className="p-3 bg-[#f9f9fa] rounded-xl border border-neutral-200 flex items-center justify-between text-xs">
+                              <div className="flex items-center gap-2.5 truncate">
+                                <FileText className="w-4 h-4 text-neutral-600 flex-shrink-0" />
+                                <div className="truncate">
+                                  <span className="font-semibold text-black truncate block">{originalMedia.name}</span>
+                                </div>
+                                <span className="text-[10px] bg-black text-white px-2 py-0.5 rounded font-bold">Original File</span>
                               </div>
-                            )}
-                            <span className="text-[10px] text-neutral-400 self-end font-mono mt-1">
-                              {rec.timestamp ? new Date(rec.timestamp).toLocaleString() : ""}
-                            </span>
+                              <button
+                                onClick={() => triggerFileDownload(originalMedia)}
+                                className="text-xs font-semibold text-neutral-700 hover:text-black flex items-center gap-1 flex-shrink-0 cursor-pointer"
+                              >
+                                <span>Download</span>
+                                <ArrowUpRight className="w-3.5 h-3.5" />
+                              </button>
+                            </div>
+                          );
+                        })()}
+
+                        {derivativesList.map((d, i) => {
+                          const coveredEntry = passport.blueprint?.covered_derivatives?.find(
+                            (cd) => cd.filename === d.name
+                          );
+                          const isRedactedCopy = Boolean(coveredEntry);
+
+                          return (
+                            <div key={i} className="p-3 bg-[#f9f9fa] rounded-xl border border-neutral-200 flex items-center justify-between text-xs">
+                              <div className="flex items-center gap-2.5 truncate min-w-0">
+                                <FileText className="w-4 h-4 text-neutral-600 flex-shrink-0" />
+                                <div className="truncate min-w-0">
+                                  <span className="font-semibold text-black truncate block">{d.name}</span>
+                                  {coveredEntry?.reason && (
+                                    <span className="text-[11px] text-neutral-500 block truncate mt-0.5">
+                                      Description: {coveredEntry.reason}
+                                    </span>
+                                  )}
+                                </div>
+                                {isRedactedCopy ? (
+                                  <span className="text-[10px] bg-amber-100 text-amber-900 px-2 py-0.5 rounded font-bold flex-shrink-0">
+                                    Redacted
+                                  </span>
+                                ) : (
+                                  <span className="text-[10px] bg-neutral-200 text-neutral-800 px-2 py-0.5 rounded font-bold flex-shrink-0">
+                                    Supporting Document
+                                  </span>
+                                )}
+                              </div>
+                              <button
+                                onClick={() => triggerFileDownload(d)}
+                                className="text-xs font-semibold text-neutral-700 hover:text-black flex items-center gap-1 flex-shrink-0 cursor-pointer"
+                              >
+                                <span>Download</span>
+                                <ArrowUpRight className="w-3.5 h-3.5" />
+                              </button>
+                            </div>
+                          );
+                        })}
+                      </div>
+
+                      {passport.blueprint?.covered_derivatives && passport.blueprint.covered_derivatives.length > 0 && (
+                        <div className="mt-4 pt-4 border-t border-neutral-100 space-y-2">
+                          <div className="flex items-center gap-2 text-xs font-bold text-amber-900">
+                            <EyeOff className="w-4 h-4 text-amber-700" />
+                            <span>Privacy Redacted Copies Details ({passport.blueprint.covered_derivatives.length})</span>
                           </div>
+                          {passport.blueprint.covered_derivatives.map((d, i) => (
+                            <div key={i} className="p-3 bg-amber-50/60 rounded-xl border border-amber-200 text-xs space-y-1">
+                              <div><span className="text-neutral-500">Redacted File:</span> <strong className="text-black">{d.filename}</strong></div>
+                              <div><span className="text-neutral-500">Redaction Note:</span> <span className="text-neutral-800 italic">&ldquo;{d.reason}&rdquo;</span></div>
+                              <div><span className="text-neutral-500">Applied Date:</span> <span className="text-neutral-600 font-mono text-[11px]">{new Date(d.linked_at).toLocaleString()}</span></div>
+                            </div>
+                          ))}
                         </div>
-                      );
-                    })}
+                      )}
+
+                    </div>
+                  </div>
+
+                  <div className="lg:col-span-5 space-y-6">
+                    <div className="bg-white rounded-2xl p-6 shadow-xs border border-[#e4e4e7] space-y-4">
+                      <div>
+                        <h3 className="text-base font-bold text-black">Complete Handover Record</h3>
+                        <p className="text-xs text-neutral-500 mt-0.5">Transparent audit timeline of officer handovers & notes.</p>
+                      </div>
+
+                      <div className="relative flex flex-col gap-4 mt-2 pl-2 max-h-[380px] overflow-y-auto pr-1">
+                        <div className="absolute left-4 top-3 bottom-5 w-0.5 bg-neutral-200"></div>
+
+                        {custodyHistory.map((rec, idx) => {
+                          const name = rec.data?.full_name || "Officer";
+                          const badgeId = rec.data?.id_number || "";
+                          const agency = rec.data?.agency || "Law Enforcement Agency";
+                          const note = rec.data?.note || "";
+
+                          return (
+                            <div key={idx} className="relative flex items-start gap-3">
+                              <div className="w-7 h-7 rounded-full bg-black text-white flex items-center justify-center shrink-0 z-10 font-bold text-xs shadow-xs">
+                                ✓
+                              </div>
+                              <div className="flex flex-col flex-1 bg-[#f9f9fa] p-3.5 rounded-xl border border-neutral-200 text-xs space-y-1">
+                                <div className="flex justify-between items-center">
+                                  <h4 className="font-bold text-black">{name}</h4>
+                                  {badgeId && <span className="text-[10px] font-mono text-neutral-400">{badgeId}</span>}
+                                </div>
+                                <p className="text-neutral-500 text-[11px]">{agency}</p>
+                                {note && (
+                                  <div className="text-xs text-neutral-800 bg-white p-2.5 rounded-lg border border-neutral-200 mt-1 leading-relaxed">
+                                    <span className="font-semibold text-black block mb-0.5">Note / Action:</span>
+                                    &ldquo;{note}&rdquo;
+                                  </div>
+                                )}
+                                <span className="text-[10px] text-neutral-400 self-end font-mono mt-1">
+                                  {rec.timestamp ? new Date(rec.timestamp).toLocaleString() : ""}
+                                </span>
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  </div>
+
+                </div>
+
+                <div className={`rounded-2xl p-5 text-center space-y-2 border ${
+                  result?.overall ? "bg-white border-[#e4e4e7]" : "bg-rose-50/50 border-rose-200"
+                }`}>
+                  <div className={`w-10 h-10 rounded-full text-white flex items-center justify-center mx-auto shadow-xs ${
+                    result?.overall ? "bg-emerald-600" : "bg-rose-600"
+                  }`}>
+                    {result?.overall ? <ShieldCheck className="w-6 h-6" /> : <XCircle className="w-6 h-6" />}
+                  </div>
+                  <h4 className="font-bold text-black text-xs uppercase tracking-wider font-mono">
+                    {result?.overall ? "Verification Seal" : "Tamper Verification Warning"}
+                  </h4>
+                  <div className="flex flex-wrap items-center justify-center gap-x-6 gap-y-2 text-xs text-neutral-700 max-w-2xl mx-auto pt-1 font-sans">
+                    <div><span className="text-neutral-500">Case Ref:</span> <strong className="text-black">{passport.case_id}</strong></div>
+                    <div>
+                      <span className="text-neutral-500">Status:</span>{" "}
+                      <strong className={result?.overall ? "text-emerald-700 font-bold" : "text-rose-700 font-bold"}>
+                        {result?.overall ? "Verified Authentic" : "VERIFICATION FAILED (Tampered)"}
+                      </strong>
+                    </div>
+                    <div><span className="text-neutral-500">Seal Reference:</span> <span className="font-mono text-xs text-black font-semibold">#{passport.blueprint?.root_fingerprint ? passport.blueprint.root_fingerprint.slice(0, 12) : "N/A"}</span></div>
+                    <div><span className="text-neutral-500">Sealed By:</span> <strong className="text-black">{custodyHistory[0]?.data?.full_name || custodyHistory[0]?.actorName || "Authorized Officer"}</strong></div>
                   </div>
                 </div>
-              </div>
-
-            </div>
-
-            <div className="bg-white rounded-2xl p-5 shadow-xs border border-[#e4e4e7] text-center space-y-2">
-              <div className="w-10 h-10 rounded-full bg-emerald-600 text-white flex items-center justify-center mx-auto shadow-xs">
-                <ShieldCheck className="w-6 h-6" />
-              </div>
-              <h4 className="font-bold text-black text-xs uppercase tracking-wider font-mono">Verification Seal</h4>
-              <div className="flex flex-wrap items-center justify-center gap-x-6 gap-y-2 text-xs text-neutral-700 max-w-2xl mx-auto pt-1 font-sans">
-                <div><span className="text-neutral-500">Case Ref:</span> <strong className="text-black">{passport.case_id}</strong></div>
-                <div><span className="text-neutral-500">Status:</span> <strong className="text-emerald-700 font-bold">Verified Authentic</strong></div>
-                <div><span className="text-neutral-500">Seal Reference:</span> <span className="font-mono text-xs text-black font-semibold">#{passport.blueprint?.root_fingerprint ? passport.blueprint.root_fingerprint.slice(0, 12) : "N/A"}</span></div>
-                <div><span className="text-neutral-500">Sealed By:</span> <strong className="text-black">{custodyHistory[0]?.data?.full_name || custodyHistory[0]?.actorName || "Authorized Officer"}</strong></div>
-              </div>
-            </div>
+              </>
+            )}
 
             {/* Bottom Action Bar */}
             <div className="bg-white rounded-2xl p-6 shadow-xs border border-[#e4e4e7] flex flex-col sm:flex-row items-center justify-between gap-4">
@@ -791,7 +918,11 @@ export default function CourtReview({ onVerified }: CourtReviewProps = {}) {
               <div className="border-b-2 border-black pb-4 flex justify-between items-start">
                 <div className="space-y-1">
                   <div className="flex items-center gap-2">
-                    <ShieldCheck className="w-8 h-8 text-black" />
+                    {result?.overall ? (
+                      <ShieldCheck className="w-8 h-8 text-[#047857]" />
+                    ) : (
+                      <XCircle className="w-8 h-8 text-[#b91c1c]" />
+                    )}
                     <div>
                       <h1 className="text-xl font-bold uppercase tracking-wider font-mono text-black leading-none">
                         OFFICIAL EVIDENTIARY CERTIFICATE
@@ -805,7 +936,12 @@ export default function CourtReview({ onVerified }: CourtReviewProps = {}) {
                 <div className="text-right font-mono text-xs space-y-0.5">
                   <div><span className="text-neutral-500">Case Ref:</span> <strong>{passport.case_id}</strong></div>
                   <div><span className="text-neutral-500">Issued:</span> {new Date().toLocaleDateString()}</div>
-                  <div><span className="text-neutral-500">Status:</span> <strong className="text-emerald-700">VERIFIED AUTHENTIC</strong></div>
+                  <div>
+                    <span className="text-neutral-500">Status:</span>{" "}
+                    <strong className={result?.overall ? "text-[#047857]" : "text-[#b91c1c]"}>
+                      {result?.overall ? "VERIFIED AUTHENTIC" : "TAMPERED / FAILED"}
+                    </strong>
+                  </div>
                 </div>
               </div>
 
